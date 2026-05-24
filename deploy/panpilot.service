@@ -1,0 +1,17 @@
+[Unit]
+Description=PanPilot AI Complement for Proactivanet
+After=network.target
+
+[Service]
+Type=simple
+User=wfroot-n5i9y
+WorkingDirectory=/home/wfroot-n5i9y/panpilot
+EnvironmentFile=/home/wfroot-n5i9y/panpilot/.env
+ExecStart=/home/wfroot-n5i9y/panpilot/.venv/bin/uvicorn panpilot.intake.webhook:app --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
