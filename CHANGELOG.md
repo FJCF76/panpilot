@@ -4,6 +4,29 @@ All notable changes to PanPilot are documented here.
 
 ---
 
+## [0.2.1] - 2026-05-26
+
+Four production bug fixes surfaced during initial live-mode validation.
+
+### Fixed
+
+- **RAG initialization gate** — RAG never loaded because the gate checked `pandocs_dir is not None` (an env var that was absent from `.env`). Now gates on ChromaDB collection presence: PanPilot initializes RAG whenever the `pandocs` collection exists and is non-empty in `chroma_dir`, regardless of `PANDOCS_DIR`.
+- **Internal reasoning leaked to customers** — when `response_draft` was absent, the router fell back to posting `decision.reasoning` as annotation text, exposing AI-internal reasoning to ticket requesters. Fixed: `alert` posts `reasoning` (internal note); `clarify`/`auto_respond`/`remind` require a non-empty `response_draft` and skip the API call silently if absent.
+- **`AUTO_RESP` self-trigger loop** — every annotation PanPilot posted moved the ticket to `AUTO_RESP`; Proactivanet then fired a Guardado webhook which re-evaluated the ticket and posted another annotation, looping indefinitely. Fixed: `AUTO_RESP + RequestedUserComments=True` is now skipped alongside the existing `CLR_REQ` guard.
+- **`CLR_REQ` self-trigger guard** — `CLR_REQ + RequestedUserComments=True` was not guarded, allowing re-evaluation on PanPilot's own clarification annotations. Fixed in the same self-trigger guard expansion.
+
+### Changed
+
+- **Pass 1 `auto_respond` reframed as a classifier** — the prompt now instructs Claude to classify as `auto_respond` when the question is answerable from documentation; Claude no longer attempts to compose the answer in Pass 1 (Pass 2 RAG handles that). `no_doc_coverage` and `low_confidence` are noted as Pass 2 outcomes only.
+- **Admin UI reasoning column** — the 200-character truncation on reasoning text in the audit table has been removed; full reasoning is shown with `white-space: pre-wrap` wrapping.
+
+### Tests
+
+- 7 new tests: router annotation text selection (`alert` uses reasoning, customer-facing actions require response_draft or skip), `AUTO_RESP` self-trigger suppression (3 cases)
+- Total: 440 tests
+
+---
+
 ## [0.2.0] - 2026-05-26
 
 Phase 2 complete. RAG auto-response pipeline and cross-ticket org reminder cap.
