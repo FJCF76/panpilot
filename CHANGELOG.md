@@ -4,6 +4,50 @@ All notable changes to PanPilot are documented here.
 
 ---
 
+## [0.2.0] - 2026-05-26
+
+Phase 2 complete. RAG auto-response pipeline and cross-ticket org reminder cap.
+Operating in DRY_RUN=true mode — no Proactivanet writes until sign-off.
+
+### Added
+
+**T17 — Cross-ticket org reminder cap**
+- `enforce_org_reminder_cap()` in `caps.py` counts non-dry-run `remind` audit rows across all tickets sharing the same `requester_id` within a configurable rolling window (`REMINDER_ORG_WINDOW_DAYS`, default 30 days)
+- Escalates to `needs_human` when the per-requester count reaches `REMINDER_ORG_MAX` (default 3), preventing spam escalation for persistent high-contact users
+- `requester_id` extracted from `PanUsers_idSource` with fallback to `PadCustomers_id`; stored in `ticket_state.requester_id` for cross-ticket join
+- `requester_id` capped at 128 chars on ingestion; `None` when both fields are absent or whitespace-only
+
+**Feature 2 — RAG auto-response (Pass 2)**
+- `panpilot/intelligence/rag.py` — new module implementing two-pass evaluation
+  - `chunk_document()`: splits Markdown docs on `## ` headers + paragraph fallback with colon-guard (never splits an intro sentence from its bullet list)
+  - `retrieve_relevant_chunks()`: embeds ticket title+description with `all-MiniLM-L6-v2` (384-dim, 256-token, CPU) and queries ChromaDB using `query_embeddings=` (never `query_texts=`)
+  - `evaluate_with_context()`: calls Claude with ticket + top-k chunks via `record_rag_decision` tool; confidence clamped to [0.0, 1.0]
+  - `rag_evaluate()`: full Pass 2 pipeline — retrieve → evaluate → confidence gate → `rag_misses` write on low confidence
+  - Degrades gracefully: encode/query errors return `no_doc_coverage` instead of DLQ propagation
+- `scripts/index_pandocs.py`: one-shot indexer for `~/pandocs` → ChromaDB `pandocs` collection; uses SHA-256 content hashing to skip unchanged chunks
+- `scripts/rag_smoke_test.py`: end-to-end smoke test for Pass 1 + Pass 2 against real docs and real Claude call
+- `build_rag_user_message()` and `RAG_DECISION_TOOL` added to `prompts.py`; doc chunks are `html.escape()`-d to harden against prompt injection in retrieved content
+- `rag_misses` table added to schema — records ticket_id and question summary for admin review of documentation gaps
+- `ticket_state.requester_id` column + partial index added to schema (nullable, no default)
+- `RagDeps` dataclass with `.available` property wires model + collection into `process_event` at zero cost when RAG is not configured
+- Webhook lifespan loads embedding model and ChromaDB collection at startup; degrades to `rag_deps=None` if pandocs are not configured; logs WARNING if collection is empty
+
+**Test suite (Phase 2)**
+- 83 new tests: T17 org cap (13), RAG engine (31), runner RAG wiring (5), runner requester_id extraction (7), caps alert passthrough, colon-guard regression, inside-window boundary, RAG decision substitution
+- Total: 433 tests
+
+### Changed
+
+- `pyproject.toml`: `sentence-transformers>=5.5.1` and `chromadb>=1.5.9` promoted from dev to production dependencies
+- `runner.process_event()`: RAG Pass 2 runs when `rag_deps.available` and Pass 1 returned `auto_respond`; the returned decision (which may be `low_confidence` or `no_doc_coverage`) replaces the original before routing
+- `CHANGELOG.md [0.1.0] Known Limitations`: "Feature 2 (RAG auto-response) is not yet implemented" — now resolved
+
+### Fixed
+
+- Pass 2 confidence clamped to [0.0, 1.0] — prevents Claude returning `confidence: 1.2` from bypassing the threshold gate
+
+---
+
 ## [0.1.0] - 2026-05-26
 
 Phase 1 complete. Full automation layer for Proactivanet ticket management,
