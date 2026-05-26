@@ -49,6 +49,12 @@ def _migrate(conn: sqlite3.Connection) -> None:
     """Apply forward-only column additions to existing tables."""
     _add_column_if_missing(conn, "audit_log", "ticket_code", "TEXT")
     _add_column_if_missing(conn, "ticket_state", "requester_id", "TEXT")
+    # Index must be created after the column exists (safe on both fresh and migrated DBs).
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_ticket_state_requester "
+        "ON ticket_state (requester_id) WHERE requester_id IS NOT NULL"
+    )
+    conn.commit()
 
 
 def reset_stale_pending(conn: sqlite3.Connection) -> int:

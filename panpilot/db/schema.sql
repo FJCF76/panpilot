@@ -35,9 +35,6 @@ CREATE TABLE IF NOT EXISTS ticket_state (
     requester_id         TEXT              -- T17: PanUsers_idSource or PadCustomers_id
 );
 
-CREATE INDEX IF NOT EXISTS idx_ticket_state_requester ON ticket_state (requester_id)
-    WHERE requester_id IS NOT NULL;
-
 -- audit_log: append-only record of every Decision.
 -- No UPDATE or DELETE is ever issued against this table by application code.
 -- flagged_by / flag_reason reserved for Phase 2 agent feedback UI.
