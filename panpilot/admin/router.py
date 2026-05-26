@@ -211,7 +211,7 @@ _HTML_TEMPLATE = """\
     body {{ font-family: system-ui, sans-serif; background: #f8f9fa; margin: 0; padding: 0; }}
     .container {{ max-width: 1200px; margin: 0 auto; padding: 1.5rem 1rem; }}
     h1 {{ font-size: 1.75rem; margin-bottom: 1.5rem; }}
-    h2 {{ font-size: 1.2rem; margin-top: 1.5rem; margin-bottom: 0.5rem; }}
+    h2 {{ font-size: 1.4rem; margin-top: 2rem; margin-bottom: 0.75rem; border-bottom: 1px solid #dee2e6; padding-bottom: 0.3rem; }}
     .text-muted {{ color: #6c757d; font-size: 0.9em; }}
     .text-success {{ color: #198754; }}
     table {{ width: 100%; border-collapse: collapse; font-size: 0.875rem; }}
@@ -232,6 +232,7 @@ _HTML_TEMPLATE = """\
     a {{ color: #0d6efd; text-decoration: none; }}
     a:hover {{ text-decoration: underline; }}
     small {{ font-size: 0.8em; color: #555; }}
+    button:focus-visible, input[type=text]:focus-visible, select:focus-visible {{ outline: 2px solid #0d6efd; outline-offset: 2px; }}
   </style>
 </head>
 <body>
