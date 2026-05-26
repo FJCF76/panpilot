@@ -499,3 +499,20 @@ T18 comes after T8 (config provides the API client) and before T2/T1 (stale dete
    (e.g. "panpilot_exclude", type boolean) on the Incident entity and provide its UUID
    as `MANUAL_EXCLUSION_FIELD_ID`. Fallback: "[panpilot-manual]" in Description field.
    Confirm approach with Proactivanet admin before T13 implementation.
+
+---
+
+## Known Limitations
+
+- **Follow-up handling on AUTO_RESP tickets is not implemented.**
+  `RequestedUserComments` cannot be used as a discriminator for customer follow-ups
+  on AUTO_RESP tickets — the flag is set by `UserTextQuestion` annotations (clarification
+  requests), not by customer portal activity. Confirmed empirically: all events on tickets
+  where `RequestedUserComments=True` were triggered by PanPilot posting a `UserTextQuestion`,
+  and the flag stays `True` on every subsequent webhook regardless of customer action.
+  For AUTO_RESP tickets (which post `AutomaticResponse`, not `UserTextQuestion`), the flag
+  is always `False` even when a customer sends a follow-up message through the portal.
+  The correct implementation requires polling `GET /incidents/{id}/comments` on every
+  webhook for an AUTO_RESP ticket and checking for new comments with `PanUsers_id != null`
+  (customer portal authorship) posted after the timestamp of the last `auto_respond` audit
+  entry. Deferred to v0.3.0.
