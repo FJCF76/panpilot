@@ -7,7 +7,10 @@ Type=simple
 User=wfroot-n5i9y
 WorkingDirectory=/home/wfroot-n5i9y/panpilot
 EnvironmentFile=/home/wfroot-n5i9y/panpilot/.env
-ExecStart=/home/wfroot-n5i9y/panpilot/.venv/bin/uvicorn panpilot.intake.webhook:app --host 127.0.0.1 --port 8000
+ExecStart=/home/wfroot-n5i9y/panpilot/.venv/bin/uvicorn panpilot.intake.webhook:app \
+    --host 127.0.0.1 --port 8000 --workers 1
+# --workers 1 is required: APScheduler uses a SQLite job store;
+# multiple workers each create a scheduler instance causing duplicate stale alerts.
 Restart=always
 RestartSec=5
 StandardOutput=journal
