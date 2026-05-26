@@ -114,8 +114,22 @@ def route(
     write_audit(conn, ctx.ticket_id, decision, dry_run=False, settings=settings,
                 ticket_code=ctx.ticket_code, anthropic_client=anthropic_client)
 
-    # P2.2: cap and strip annotation text before sending to Proactivanet.
-    text = (decision.response_draft or decision.reasoning)[:_MAX_ANNOTATION_LEN].strip()
+    # P2.2: determine annotation text before sending to Proactivanet.
+    # alert is an internal note posted to agents — its text comes from reasoning.
+    # clarify, auto_respond, and remind are customer-facing — their text comes from
+    # response_draft only. reasoning is NEVER exposed to customers; if response_draft
+    # is absent for these actions, skip the API call rather than leaking internal text.
+    if decision.action == "alert":
+        text = (decision.reasoning or "")[:_MAX_ANNOTATION_LEN].strip()
+    else:
+        text = (decision.response_draft or "")[:_MAX_ANNOTATION_LEN].strip()
+        if not text:
+            logger.warning(
+                "ticket=%s action=%s: response_draft is empty — skipping annotation post",
+                ctx.ticket_id,
+                decision.action,
+            )
+            return
 
     # P1.3: close client after use if we created it (prevent FD leak).
     owned = proactivanet_client is None

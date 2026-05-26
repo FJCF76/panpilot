@@ -54,29 +54,33 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     anthropic_client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
 
     # Step 0e (RAG): load sentence-transformers model and connect ChromaDB collection.
-    # Both are optional — if pandocs_dir is not configured, RAG is disabled (degraded mode).
+    # Gate on whether the 'pandocs' ChromaDB collection exists and has chunks.
+    # PANDOCS_DIR is only needed for the indexing script, not at runtime.
     rag_deps: RagDeps = RagDeps(model=None, collection=None)
-    if settings.pandocs_dir is not None:
+    try:
+        import chromadb  # noqa: PLC0415
+        _chroma_client = chromadb.PersistentClient(path=str(settings.chroma_dir))
         try:
-            import chromadb  # noqa: PLC0415
-            rag_model = _load_model()
-            chroma_client = chromadb.PersistentClient(path=str(settings.chroma_dir))
-            try:
-                rag_collection = chroma_client.get_collection("pandocs")
-                if rag_collection.count() == 0:
-                    logger.warning(
-                        "RAG: pandocs_dir is set but the 'pandocs' collection is empty — "
-                        "run 'uv run scripts/index_pandocs.py' to index documentation."
-                    )
-                rag_deps = RagDeps(model=rag_model, collection=rag_collection)
-                logger.info("RAG: loaded model and collection (%d chunks)", rag_collection.count())
-            except Exception:
+            _rag_collection = _chroma_client.get_collection("pandocs")
+            if _rag_collection.count() == 0:
                 logger.warning(
-                    "RAG: 'pandocs' collection not found — "
+                    "RAG: 'pandocs' collection exists but is empty — "
                     "run 'uv run scripts/index_pandocs.py' to index documentation."
                 )
+            else:
+                rag_model = _load_model()
+                rag_deps = RagDeps(model=rag_model, collection=_rag_collection)
+                logger.info(
+                    "RAG: loaded model and collection (%d chunks)", _rag_collection.count()
+                )
         except Exception:
-            logger.exception("RAG: failed to initialize — running in degraded mode (no RAG)")
+            logger.info(
+                "RAG: 'pandocs' collection not found in %s — running without RAG. "
+                "Run 'uv run scripts/index_pandocs.py' to enable.",
+                settings.chroma_dir,
+            )
+    except Exception:
+        logger.exception("RAG: failed to initialize — running in degraded mode (no RAG)")
 
     # Step 1 (T18): load reference data — raises on failure, won't start blind
     priority_map, status_map, action_type_map, terminal_status_names = await load_reference_data(settings)

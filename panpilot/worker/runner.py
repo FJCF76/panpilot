@@ -217,13 +217,18 @@ def process_event(
         )
         return
 
-    # CLR_REQ self-trigger guard: when PanPilot posts a clarification (UserTextQuestion),
-    # Proactivanet sets RequestedUserComments=True and fires a Guardado.  That Guardado
-    # must NOT re-evaluate — the customer has not replied yet.  Only re-evaluate CLR_REQ
-    # when RequestedUserComments=False, which means the customer actually responded.
-    if _current_state == "CLR_REQ" and bool(payload.get("RequestedUserComments")):
+    # Self-trigger guard for annotation-driven states.
+    # When PanPilot posts an annotation, Proactivanet may set RequestedUserComments=True
+    # and fires a Guardado.  That Guardado must NOT re-evaluate — PanPilot just acted.
+    # Only re-evaluate when RequestedUserComments=False (customer replied or unrelated update).
+    #
+    #   CLR_REQ + RequestedUserComments=True  → PanPilot's clarify reflected back; skip.
+    #   AUTO_RESP + RequestedUserComments=True → PanPilot's auto_respond reflected back; skip.
+    #   Either state + RequestedUserComments=False → customer replied; evaluate.
+    if _current_state in {"CLR_REQ", "AUTO_RESP"} and bool(payload.get("RequestedUserComments")):
         logger.info(
-            "Worker: skipping CLR_REQ self-trigger for ticket=%s (awaiting_client_reply=True)",
+            "Worker: skipping %s self-trigger for ticket=%s (awaiting_client_reply=True)",
+            _current_state,
             ticket_id,
         )
         return

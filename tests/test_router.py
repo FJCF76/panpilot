@@ -50,7 +50,9 @@ def _make_decision(action: str, **kwargs) -> Decision:
     defaults = dict(reasoning="Test reasoning.", response_draft=None, none_reason=None)
     if action == "none" and "none_reason" not in kwargs:
         defaults["none_reason"] = "no_action_warranted"
-    if action in {"auto_respond", "remind"} and "response_draft" not in kwargs:
+    # clarify, auto_respond, and remind are customer-facing and require response_draft.
+    # alert is an internal note and uses reasoning instead.
+    if action in {"clarify", "auto_respond", "remind"} and "response_draft" not in kwargs:
         defaults["response_draft"] = "La solución es..."
     return Decision(action=action, **{**defaults, **kwargs})
 
@@ -140,7 +142,7 @@ def test_correct_action_type_uuid_used(action, expected_type_name, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Annotation text: response_draft preferred over reasoning
+# Annotation text: customer-facing actions use response_draft; alert uses reasoning
 # ---------------------------------------------------------------------------
 
 def test_annotation_uses_response_draft_when_present(monkeypatch):
@@ -154,7 +156,8 @@ def test_annotation_uses_response_draft_when_present(monkeypatch):
     assert kwargs["text"] == "La respuesta en español."
 
 
-def test_annotation_falls_back_to_reasoning_when_no_draft(monkeypatch):
+def test_alert_uses_reasoning_as_annotation_text(monkeypatch):
+    """alert is an internal note — posts reasoning, never response_draft."""
     monkeypatch.setenv("DRY_RUN", "false")
     get_settings.cache_clear()
     decision = _make_decision("alert", response_draft=None, reasoning="Ticket stale for 6h.")
@@ -163,6 +166,28 @@ def test_annotation_falls_back_to_reasoning_when_no_draft(monkeypatch):
     route(decision, _make_ctx(), get_settings(), conn, _ACTION_TYPE_MAP, proactivanet_client=mock_client)
     _, kwargs = mock_client.post_annotation.call_args
     assert kwargs["text"] == "Ticket stale for 6h."
+
+
+def test_auto_respond_skips_post_when_response_draft_absent(monkeypatch):
+    """auto_respond with no response_draft must NOT post — reasoning must never reach customers."""
+    monkeypatch.setenv("DRY_RUN", "false")
+    get_settings.cache_clear()
+    decision = _make_decision("auto_respond", response_draft=None)
+    conn = _in_memory_conn()
+    mock_client = _mock_client()
+    route(decision, _make_ctx(), get_settings(), conn, _ACTION_TYPE_MAP, proactivanet_client=mock_client)
+    mock_client.post_annotation.assert_not_called()
+
+
+def test_clarify_skips_post_when_response_draft_absent(monkeypatch):
+    """clarify with no response_draft must NOT post — reasoning must never reach customers."""
+    monkeypatch.setenv("DRY_RUN", "false")
+    get_settings.cache_clear()
+    decision = _make_decision("clarify", response_draft=None)
+    conn = _in_memory_conn()
+    mock_client = _mock_client()
+    route(decision, _make_ctx(), get_settings(), conn, _ACTION_TYPE_MAP, proactivanet_client=mock_client)
+    mock_client.post_annotation.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
