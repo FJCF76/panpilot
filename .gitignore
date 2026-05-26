@@ -226,3 +226,4 @@ data/
 
 # Environment
 .env
+.gstack/
