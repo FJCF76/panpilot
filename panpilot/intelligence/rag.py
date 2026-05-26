@@ -237,6 +237,7 @@ def _generate_gap_explanation(
 def _write_rag_miss(
     conn: sqlite3.Connection,
     ticket_id: str,
+    ticket_code: str | None,
     question_summary: str,
     *,
     confidence: float | None,
@@ -248,10 +249,11 @@ def _write_rag_miss(
     """Record a documentation gap for admin review."""
     conn.execute(
         "INSERT INTO rag_misses "
-        "(ticket_id, question_summary, confidence, none_reason, chunk_sources, gap_category, gap_explanation) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "(ticket_id, ticket_code, question_summary, confidence, none_reason, chunk_sources, gap_category, gap_explanation) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         (
             ticket_id,
+            ticket_code,
             question_summary[:200],
             confidence,
             none_reason,
@@ -300,7 +302,7 @@ def rag_evaluate(
             ctx, [], "no_doc_coverage", None, settings, client
         )
         _write_rag_miss(
-            conn, ctx.ticket_id, ctx.title,
+            conn, ctx.ticket_id, ctx.ticket_code, ctx.title,
             confidence=None,
             none_reason="no_doc_coverage",
             chunk_sources=[],
@@ -334,7 +336,7 @@ def rag_evaluate(
             ctx, chunks, "low_confidence", confidence, settings, client
         )
         _write_rag_miss(
-            conn, ctx.ticket_id, ctx.title,
+            conn, ctx.ticket_id, ctx.ticket_code, ctx.title,
             confidence=confidence,
             none_reason="low_confidence",
             chunk_sources=chunk_sources,

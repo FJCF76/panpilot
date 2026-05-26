@@ -298,7 +298,7 @@ class TestWriteRagMiss:
 
     def test_row_inserted_in_rag_misses(self):
         conn = _conn()
-        _write_rag_miss(conn, "TKT-1", "How to reset password", **_WRITE_DEFAULTS)
+        _write_rag_miss(conn, "TKT-1", None, "How to reset password", **_WRITE_DEFAULTS)
         row = conn.execute("SELECT * FROM rag_misses WHERE ticket_id='TKT-1'").fetchone()
         assert row is not None
         assert row["question_summary"] == "How to reset password"
@@ -306,14 +306,14 @@ class TestWriteRagMiss:
     def test_summary_truncated_to_200_chars(self):
         conn = _conn()
         long_summary = "x" * 300
-        _write_rag_miss(conn, "TKT-2", long_summary, **_WRITE_DEFAULTS)
+        _write_rag_miss(conn, "TKT-2", None, long_summary, **_WRITE_DEFAULTS)
         row = conn.execute("SELECT question_summary FROM rag_misses WHERE ticket_id='TKT-2'").fetchone()
         assert len(row["question_summary"]) == 200
 
     def test_write_rag_miss_stores_all_new_columns(self):
         conn = _conn()
         _write_rag_miss(
-            conn, "TKT-3", "Exportar datos",
+            conn, "TKT-3", None, "Exportar datos",
             confidence=0.55,
             none_reason="low_confidence",
             chunk_sources=[{"title": "Guía", "filename": "guia.md"}],
@@ -331,7 +331,7 @@ class TestWriteRagMiss:
         conn = _conn()
         sources = [{"title": "Manual", "filename": "manual.md"}]
         _write_rag_miss(
-            conn, "TKT-4", "Reset password",
+            conn, "TKT-4", None, "Reset password",
             confidence=None,
             none_reason="no_doc_coverage",
             chunk_sources=sources,

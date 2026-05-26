@@ -61,6 +61,7 @@ def _insert_event(conn: sqlite3.Connection, event_id: str = "evt-1", processed: 
 def _insert_rag_miss(
     conn: sqlite3.Connection,
     ticket_id: str = "TKT-001",
+    ticket_code: str | None = None,
     question_summary: str = "¿Cómo configurar webhooks?",
     confidence: float | None = 0.72,
     none_reason: str = "low_confidence",
@@ -70,9 +71,9 @@ def _insert_rag_miss(
 ) -> None:
     conn.execute(
         "INSERT INTO rag_misses "
-        "(ticket_id, question_summary, confidence, none_reason, chunk_sources, gap_category, gap_explanation) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (ticket_id, question_summary, confidence, none_reason, chunk_sources, gap_category, gap_explanation),
+        "(ticket_id, ticket_code, question_summary, confidence, none_reason, chunk_sources, gap_category, gap_explanation) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (ticket_id, ticket_code, question_summary, confidence, none_reason, chunk_sources, gap_category, gap_explanation),
     )
     conn.commit()
 

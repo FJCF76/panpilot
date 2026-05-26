@@ -59,6 +59,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
     _add_column_if_missing(conn, "rag_misses", "chunk_sources", "TEXT")
     _add_column_if_missing(conn, "rag_misses", "gap_category", "TEXT")
     _add_column_if_missing(conn, "rag_misses", "gap_explanation", "TEXT")
+    _add_column_if_missing(conn, "rag_misses", "ticket_code", "TEXT")
     conn.commit()
 
 

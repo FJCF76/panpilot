@@ -77,6 +77,7 @@ CREATE INDEX IF NOT EXISTS idx_dlq_pending ON dlq (exhausted, next_retry)
 CREATE TABLE IF NOT EXISTS rag_misses (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
     ticket_id        TEXT NOT NULL,
+    ticket_code      TEXT,              -- human-readable code, e.g. "REQ 2026-000013"
     question_summary TEXT NOT NULL,
     evaluated_at     TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     confidence       REAL,              -- NULL for no_doc_coverage; 0.0–1.0 for low_confidence

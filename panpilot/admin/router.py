@@ -188,7 +188,7 @@ def list_rag_gaps(
     ]
     recent = [
         dict(r) for r in conn.execute(
-            "SELECT id, ticket_id, question_summary, confidence, none_reason, "
+            "SELECT id, ticket_id, ticket_code, question_summary, confidence, none_reason, "
             "chunk_sources, gap_category, gap_explanation, evaluated_at "
             "FROM rag_misses ORDER BY evaluated_at DESC LIMIT 100"
         ).fetchall()
@@ -366,7 +366,7 @@ def _render_rag_gaps(summary_rows: list[dict], recent_rows: list[dict], base_url
         parts += ["</tbody></table></div>"]
 
     parts.append(
-        '<p><strong>Misses individuales</strong>'
+        '<p><strong>Consultas sin respuesta automática</strong>'
         ' <span class="text-muted">(últimas 100)</span></p>'
     )
     if not recent_rows:
@@ -381,10 +381,11 @@ def _render_rag_gaps(summary_rows: list[dict], recent_rows: list[dict], base_url
             "</tr></thead><tbody>",
         ]
         for r in recent_rows:
+            label = _esc(r["ticket_code"] or r["ticket_id"])
             ticket_link = (
                 f'<a href="{_esc(base_url)}/servicedesk/incidents/formIncidents'
                 f'/formIncidents.paw?id={_esc(r["ticket_id"])}"'
-                f' target="_blank" rel="noopener">{_esc(r["ticket_id"])}</a>'
+                f' target="_blank" rel="noopener">{label}</a>'
             )
             conf_str = f'{r["confidence"]:.0%}' if r["confidence"] is not None else "—"
             reason_str = (
@@ -475,7 +476,7 @@ def admin_dashboard(
     ]
     rag_recent_rows = [
         dict(r) for r in conn.execute(
-            "SELECT id, ticket_id, question_summary, confidence, none_reason, "
+            "SELECT id, ticket_id, ticket_code, question_summary, confidence, none_reason, "
             "chunk_sources, gap_category, gap_explanation, evaluated_at "
             "FROM rag_misses ORDER BY evaluated_at DESC LIMIT 100"
         ).fetchall()
