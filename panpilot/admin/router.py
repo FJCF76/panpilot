@@ -232,6 +232,7 @@ _HTML_TEMPLATE = """\
     a {{ color: #0d6efd; text-decoration: none; }}
     a:hover {{ text-decoration: underline; }}
     small {{ font-size: 0.8em; color: #555; }}
+    td small, td code {{ font-size: inherit; }}
     button:focus-visible, input[type=text]:focus-visible, select:focus-visible {{ outline: 2px solid #0d6efd; outline-offset: 2px; }}
   </style>
 </head>
