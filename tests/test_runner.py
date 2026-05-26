@@ -649,13 +649,14 @@ class TestSelfTriggerLoopGuard:
         mock_eval.assert_called_once()
 
     def test_clr_req_state_still_evaluates(self):
-        """CLR_REQ (clarify sent) is not in the skip set — customer reply triggers re-eval."""
+        """CLR_REQ + RequestedUserComments=False (customer replied) → re-evaluate."""
         conn = _conn()
         conn.execute(
             "INSERT INTO ticket_state (ticket_id, state, priority, clarification_count) "
             "VALUES ('TKT-001', 'CLR_REQ', 'P2', 1)",
         )
         conn.commit()
+        # _payload() defaults RequestedUserComments=False — customer has replied
         with patch("panpilot.worker.runner.evaluate_ticket", return_value=_mock_decision("none")) as mock_eval:
             with patch("panpilot.worker.runner.route"):
                 process_event(
@@ -663,6 +664,40 @@ class TestSelfTriggerLoopGuard:
                     _PRIORITY_MAP, _STATUS_MAP, _ACTION_TYPE_MAP,
                 )
         mock_eval.assert_called_once()
+
+    def test_clr_req_awaiting_self_trigger_skips_evaluate(self):
+        """CLR_REQ + RequestedUserComments=True → PanPilot's annotation self-trigger → skip."""
+        conn = _conn()
+        conn.execute(
+            "INSERT INTO ticket_state (ticket_id, state, priority, clarification_count) "
+            "VALUES ('TKT-001', 'CLR_REQ', 'P2', 1)",
+        )
+        conn.commit()
+        evt = _event(payload=_payload(RequestedUserComments=True))
+        with patch("panpilot.worker.runner.evaluate_ticket") as mock_eval:
+            with patch("panpilot.worker.runner.route"):
+                process_event(
+                    evt, get_settings(), conn,
+                    _PRIORITY_MAP, _STATUS_MAP, _ACTION_TYPE_MAP,
+                )
+        mock_eval.assert_not_called()
+
+    def test_clr_req_awaiting_self_trigger_skips_route(self):
+        """CLR_REQ + RequestedUserComments=True → route() never called."""
+        conn = _conn()
+        conn.execute(
+            "INSERT INTO ticket_state (ticket_id, state, priority, clarification_count) "
+            "VALUES ('TKT-001', 'CLR_REQ', 'P2', 1)",
+        )
+        conn.commit()
+        evt = _event(payload=_payload(RequestedUserComments=True))
+        with patch("panpilot.worker.runner.evaluate_ticket"):
+            with patch("panpilot.worker.runner.route") as mock_route:
+                process_event(
+                    evt, get_settings(), conn,
+                    _PRIORITY_MAP, _STATUS_MAP, _ACTION_TYPE_MAP,
+                )
+        mock_route.assert_not_called()
 
     def test_no_prior_state_still_evaluates(self):
         """No existing ticket_state row → new ticket, should be evaluated."""
