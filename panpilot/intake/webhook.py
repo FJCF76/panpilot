@@ -16,6 +16,7 @@ from panpilot.db.connection import get_connection, init_db, main_db_path, reset_
 from panpilot.intake.catchup import get_last_received_at, run_startup_catchup
 from panpilot.intake.reference_data import load_reference_data
 from panpilot.intake.scheduler import build_scheduler
+from panpilot.intelligence.rag import RagDeps, _load_model
 from panpilot.worker.dlq import DLQThread
 from panpilot.worker.runner import WorkerThread, process_event
 
@@ -52,6 +53,31 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Created once at startup so connection pooling is reused across tickets.
     anthropic_client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
 
+    # Step 0e (RAG): load sentence-transformers model and connect ChromaDB collection.
+    # Both are optional — if pandocs_dir is not configured, RAG is disabled (degraded mode).
+    rag_deps: RagDeps = RagDeps(model=None, collection=None)
+    if settings.pandocs_dir is not None:
+        try:
+            import chromadb  # noqa: PLC0415
+            rag_model = _load_model()
+            chroma_client = chromadb.PersistentClient(path=str(settings.chroma_dir))
+            try:
+                rag_collection = chroma_client.get_collection("pandocs")
+                if rag_collection.count() == 0:
+                    logger.warning(
+                        "RAG: pandocs_dir is set but the 'pandocs' collection is empty — "
+                        "run 'uv run scripts/index_pandocs.py' to index documentation."
+                    )
+                rag_deps = RagDeps(model=rag_model, collection=rag_collection)
+                logger.info("RAG: loaded model and collection (%d chunks)", rag_collection.count())
+            except Exception:
+                logger.warning(
+                    "RAG: 'pandocs' collection not found — "
+                    "run 'uv run scripts/index_pandocs.py' to index documentation."
+                )
+        except Exception:
+            logger.exception("RAG: failed to initialize — running in degraded mode (no RAG)")
+
     # Step 1 (T18): load reference data — raises on failure, won't start blind
     priority_map, status_map, action_type_map, terminal_status_names = await load_reference_data(settings)
     app.state.priority_map = priority_map
@@ -78,6 +104,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             priority_map, status_map, action_type_map,
             terminal_status_names=terminal_status_names,
             anthropic_client=anthropic_client,
+            rag_deps=rag_deps,
         )
 
     dlq_thread = DLQThread(dlq_conn, _dlq_process_fn)
@@ -89,6 +116,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         worker_conn, settings, priority_map, status_map, action_type_map,
         terminal_status_names=terminal_status_names,
         anthropic_client=anthropic_client,
+        rag_deps=rag_deps,
     )
     worker_thread.start()
 
