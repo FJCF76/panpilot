@@ -40,6 +40,10 @@ Rules you must follow:
 - PanPilot NEVER changes ticket status, priority, or assignment. It only posts \
 comments and annotations.
 - response_draft must be in Spanish and must directly address the customer's question.
+- response_draft must be plain text only. Proactivanet does not render markdown: \
+do not use bold (**text**), italics (*text*), headers (# or ##), bullet symbols \
+(- or *), or backtick code blocks. For lists, use plain numbered format \
+(1. 2. 3.) followed by plain text. Use short paragraphs separated by blank lines.
 - reasoning must be 2-3 sentences explaining WHY you chose this action, not what it is.
 - When uncertain between acting and not acting, prefer none over a potentially wrong action.\
 """
@@ -66,7 +70,9 @@ DECISION_TOOL: dict = {
                 "type": "string",
                 "description": (
                     "Customer-facing text in Spanish. "
-                    "Required for auto_respond and remind. Null for all other actions."
+                    "Required for auto_respond and remind. Null for all other actions. "
+                    "Plain text only — no markdown, no asterisks, no bullet symbols, "
+                    "no headers. Use numbered lists (1. 2. 3.) and plain paragraphs."
                 ),
             },
             "none_reason": {
@@ -93,7 +99,11 @@ RAG_DECISION_TOOL: dict = {
         "properties": {
             "response_draft": {
                 "type": "string",
-                "description": "Complete customer-facing answer in Spanish. Must directly address the question.",
+                "description": (
+                    "Complete customer-facing answer in Spanish. Must directly address the question. "
+                    "Plain text only — no markdown, no asterisks, no bullet symbols, "
+                    "no headers. Use numbered lists (1. 2. 3.) and plain paragraphs."
+                ),
             },
             "confidence": {
                 "type": "number",
