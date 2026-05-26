@@ -48,6 +48,7 @@ def init_db(settings: Settings) -> None:
 def _migrate(conn: sqlite3.Connection) -> None:
     """Apply forward-only column additions to existing tables."""
     _add_column_if_missing(conn, "audit_log", "ticket_code", "TEXT")
+    _add_column_if_missing(conn, "ticket_state", "requester_id", "TEXT")
 
 
 def reset_stale_pending(conn: sqlite3.Connection) -> int:

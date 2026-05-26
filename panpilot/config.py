@@ -39,6 +39,7 @@ class Settings(BaseSettings):
 
     # Reminder caps (T16, T17)
     reminder_max_per_ticket: int = 2
+    reminder_org_max: int = 3          # T17: max reminders to same requester across all tickets within window
     reminder_org_window_days: int = 3
 
     # Stale detection thresholds (T6)
@@ -67,6 +68,11 @@ class Settings(BaseSettings):
 
     # SQLite data directory — relative to the working directory at startup
     data_dir: Path = Path("data")
+
+    # RAG — documentation retrieval (Phase 2)
+    pandocs_dir: Path | None = None         # ~/pandocs or absolute path; None disables RAG
+    chroma_dir: Path = Path("data/chroma")  # ChromaDB persistence directory
+    rag_top_k: int = 5                       # number of chunks to retrieve per query
 
     @field_validator("proactivanet_author_id")
     @classmethod

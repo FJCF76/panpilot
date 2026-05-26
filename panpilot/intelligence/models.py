@@ -45,7 +45,8 @@ class TicketContext:
     created_at: str
     last_modified: str
     awaiting_client_reply: bool
-    ticket_code: str | None = None  # human-readable code, e.g. "INC 2026-000001"
+    ticket_code: str | None = None   # human-readable code, e.g. "INC 2026-000001"
+    requester_id: str | None = None  # T17: PanUsers_idSource or PadCustomers_id
 
 
 @dataclass

@@ -22,6 +22,7 @@ CREATE INDEX IF NOT EXISTS idx_events_pending ON events (processed, received_at)
 -- ticket_state: per-ticket state machine (T9).
 -- clarification_count and reminder_count enforced by T11/T16.
 -- priority written by T9 when first processing a ticket; read by T6 stale detector.
+-- requester_id stores PanUsers_idSource (fallback PadCustomers_id) for T17 org-level cap.
 CREATE TABLE IF NOT EXISTS ticket_state (
     ticket_id            TEXT PRIMARY KEY,
     state                TEXT NOT NULL,    -- PENDING_EVALUATION | AUTO_RESP | CLR_REQ |
@@ -30,8 +31,12 @@ CREATE TABLE IF NOT EXISTS ticket_state (
     priority             TEXT,             -- P1 | P2 | P3; NULL until T9 sets it
     updated_at           TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     clarification_count  INTEGER DEFAULT 0,
-    reminder_count       INTEGER DEFAULT 0
+    reminder_count       INTEGER DEFAULT 0,
+    requester_id         TEXT              -- T17: PanUsers_idSource or PadCustomers_id
 );
+
+CREATE INDEX IF NOT EXISTS idx_ticket_state_requester ON ticket_state (requester_id)
+    WHERE requester_id IS NOT NULL;
 
 -- audit_log: append-only record of every Decision.
 -- No UPDATE or DELETE is ever issued against this table by application code.

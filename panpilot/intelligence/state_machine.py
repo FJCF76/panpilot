@@ -93,6 +93,8 @@ def apply_transition(
     ticket_id: str,
     decision: Decision,
     priority: str,
+    *,
+    requester_id: str | None = None,
 ) -> str:
     """
     Compute the next state and upsert ticket_state.
@@ -100,13 +102,14 @@ def apply_transition(
     - Updates clarification_count when action == "clarify".
     - Updates reminder_count when action == "remind".
     - Always writes the supplied priority (callers resolve UUIDs before calling).
+    - Writes requester_id when provided (T17); preserves existing value when None.
     - Returns the new state string.
 
     Must be called after route() so the audit log entry is guaranteed to exist
     before the state transitions (audit is always written, state only on success).
     """
     row = conn.execute(
-        "SELECT state, clarification_count, reminder_count "
+        "SELECT state, clarification_count, reminder_count, requester_id "
         "FROM ticket_state WHERE ticket_id = ?",
         (ticket_id,),
     ).fetchone()
@@ -118,32 +121,40 @@ def apply_transition(
     reminder_count = (row["reminder_count"] if row else 0) + (
         1 if decision.action == "remind" else 0
     )
+    # Preserve existing requester_id if the caller does not supply one.
+    effective_requester_id = requester_id if requester_id is not None else (
+        row["requester_id"] if row else None
+    )
 
     new_state = transition(current_state, decision)
 
     conn.execute(
         """
         INSERT INTO ticket_state
-            (ticket_id, state, priority, updated_at, clarification_count, reminder_count)
-        VALUES (?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), ?, ?)
+            (ticket_id, state, priority, updated_at, clarification_count, reminder_count,
+             requester_id)
+        VALUES (?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), ?, ?, ?)
         ON CONFLICT(ticket_id) DO UPDATE SET
             state               = excluded.state,
             priority            = excluded.priority,
             updated_at          = excluded.updated_at,
             clarification_count = excluded.clarification_count,
-            reminder_count      = excluded.reminder_count
+            reminder_count      = excluded.reminder_count,
+            requester_id        = excluded.requester_id
         """,
-        (ticket_id, new_state, priority, clarification_count, reminder_count),
+        (ticket_id, new_state, priority, clarification_count, reminder_count,
+         effective_requester_id),
     )
     conn.commit()
 
     logger.debug(
-        "ticket=%s  %s → %s  (action=%s priority=%s)",
+        "ticket=%s  %s → %s  (action=%s priority=%s requester=%s)",
         ticket_id,
         current_state or "NEW",
         new_state,
         decision.action,
         priority,
+        effective_requester_id,
     )
     return new_state
 
