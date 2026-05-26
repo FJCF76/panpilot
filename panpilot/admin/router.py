@@ -336,9 +336,12 @@ def _render_rag_gaps(summary_rows: list[dict], recent_rows: list[dict], base_url
         ' <span class="text-muted">(agrupadas)</span></p>'
     )
     if not summary_rows:
-        parts.append(
-            '<p class="text-muted">No hay lagunas de documentación registradas aún.</p>'
+        msg = (
+            'No hay lagunas de documentación registradas aún.'
+            if not recent_rows
+            else 'Sin lagunas categorizadas todavía.'
         )
+        parts.append(f'<p class="text-muted">{msg}</p>')
     else:
         parts += [
             '<div style="overflow-x:auto">',
