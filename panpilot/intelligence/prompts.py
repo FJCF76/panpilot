@@ -85,6 +85,30 @@ DECISION_TOOL: dict = {
 }
 
 
+RAG_DECISION_TOOL: dict = {
+    "name": "record_rag_decision",
+    "description": "Record the final answer and confidence after reviewing the documentation.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "response_draft": {
+                "type": "string",
+                "description": "Complete customer-facing answer in Spanish. Must directly address the question.",
+            },
+            "confidence": {
+                "type": "number",
+                "description": "0.0-1.0 confidence that the provided documentation fully answers the question.",
+            },
+            "reasoning": {
+                "type": "string",
+                "description": "2-3 sentences on why this answer is or isn't well-supported by the docs.",
+            },
+        },
+        "required": ["response_draft", "confidence", "reasoning"],
+    },
+}
+
+
 def build_user_message(ctx: TicketContext) -> str:
     """
     Build the user turn for the evaluation prompt.
@@ -109,4 +133,32 @@ def build_user_message(ctx: TicketContext) -> str:
         f"<last_modified>{ctx.last_modified}</last_modified>\n"
         f"<awaiting_client_reply>{awaiting}</awaiting_client_reply>\n"
         "</ticket>"
+    )
+
+
+def build_rag_user_message(ctx: TicketContext, chunks: list[dict]) -> str:
+    """
+    Build the Pass 2 user message with retrieved documentation chunks injected.
+
+    Ticket content and doc chunks are both XML-wrapped to harden against prompt injection.
+    """
+    awaiting = "yes" if ctx.awaiting_client_reply else "no"
+    docs_xml = "\n".join(
+        f"<doc index=\"{i + 1}\">\n{html.escape(c['document'])}\n</doc>"
+        for i, c in enumerate(chunks)
+    )
+    return (
+        "Review the following support ticket and the retrieved documentation excerpts, "
+        "then call the record_rag_decision tool with a complete answer.\n\n"
+        "<ticket>\n"
+        f"<id>{ctx.ticket_id}</id>\n"
+        f"<title>{html.escape(ctx.title)}</title>\n"
+        f"<description>{html.escape(ctx.description)}</description>\n"
+        f"<status>{ctx.status}</status>\n"
+        f"<priority>{ctx.priority}</priority>\n"
+        f"<awaiting_client_reply>{awaiting}</awaiting_client_reply>\n"
+        "</ticket>\n\n"
+        "<documentation>\n"
+        f"{docs_xml}\n"
+        "</documentation>"
     )

@@ -45,9 +45,10 @@ import anthropic
 from panpilot.config import Settings
 from panpilot.execution.proactivanet import ProactivanetClient
 from panpilot.execution.router import route
-from panpilot.intelligence.caps import enforce_clarification_cap
+from panpilot.intelligence.caps import enforce_clarification_cap, enforce_org_reminder_cap, enforce_reminder_cap
 from panpilot.intelligence.engine import evaluate_ticket
-from panpilot.intelligence.models import TicketContext
+from panpilot.intelligence.models import Decision, TicketContext
+from panpilot.intelligence.rag import RagDeps, rag_evaluate
 from panpilot.intelligence.state_machine import apply_transition
 from panpilot.intake.event_store import claim_next_event, mark_event_processed
 from panpilot.worker.dlq import create_dlq_entry
@@ -116,6 +117,14 @@ def parse_ticket_context(
     status_uuid = payload.get("PadStatus_id") or ""
     status = status_map.get(status_uuid, "Unknown")
 
+    # T17: requester identity — prefer PanUsers_idSource, fall back to PadCustomers_id.
+    requester_id = (
+        (payload.get("PanUsers_idSource") or payload.get("PadCustomers_id") or "")
+        .strip() or None
+    )
+    if requester_id:
+        requester_id = requester_id[:128]
+
     return TicketContext(
         ticket_id=ticket_id,
         title=payload.get("Title", ""),
@@ -126,7 +135,24 @@ def parse_ticket_context(
         last_modified=payload.get("DateLastModified", ""),
         awaiting_client_reply=bool(payload.get("RequestedUserComments", False)),
         ticket_code=payload.get("Code"),
+        requester_id=requester_id,
     )
+
+
+def _check_manual_exclusion(ctx: TicketContext, settings: Settings) -> bool:
+    """
+    Return True if the ticket carries the manual-exclusion marker.
+
+    When MANUAL_EXCLUSION_FIELD_ID is set, that custom Proactivanet field is
+    authoritative (not yet implemented — requires the admin to create the field
+    first).  When empty (the default), the text-marker fallback applies:
+    any ticket whose Description contains "[panpilot-manual]" (case-insensitive)
+    is excluded from automated evaluation.
+    """
+    if settings.manual_exclusion_field_id:
+        # Custom field path: deferred to Phase 2 activation (T13).
+        return False
+    return "[panpilot-manual]" in (ctx.description or "").lower()
 
 
 def process_event(
@@ -140,6 +166,7 @@ def process_event(
     terminal_status_names: frozenset[str] = frozenset(),
     proactivanet_client: ProactivanetClient | None = None,
     anthropic_client: anthropic.Anthropic | None = None,
+    rag_deps: RagDeps | None = None,
 ) -> None:
     """
     Run one event through the full evaluation pipeline.
@@ -196,15 +223,38 @@ def process_event(
     if not _try_mark_pending(conn, ticket_id, ctx.priority):
         raise TicketBusy(f"ticket {ticket_id!r} is already in PENDING_EVALUATION")
 
+    # T13: manual exclusion — skip Claude entirely, write audit, resolve state
+    if _check_manual_exclusion(ctx, settings):
+        logger.info("ticket=%s manually excluded ([panpilot-manual] marker)", ticket_id)
+        _excl = Decision(
+            action="none",
+            reasoning="Ticket excluido manualmente de PanPilot.",
+            none_reason="no_action_warranted",
+        )
+        route(_excl, ctx, settings, conn, action_type_map,
+              proactivanet_client=proactivanet_client, anthropic_client=anthropic_client)
+        apply_transition(conn, ticket_id, _excl, ctx.priority)
+        return
+
     decision = evaluate_ticket(ctx, settings, client=anthropic_client)
+
+    # RAG Pass 2: enrich auto_respond with retrieved documentation context
+    if decision.action == "auto_respond" and rag_deps is not None and rag_deps.available:
+        decision = rag_evaluate(ctx, rag_deps, settings, conn, anthropic_client)
 
     # T11: override clarify if cap reached
     decision = enforce_clarification_cap(conn, ticket_id, decision, settings)
 
+    # T16: override remind if cap reached
+    decision = enforce_reminder_cap(conn, ticket_id, decision, settings)
+
+    # T17: override remind if org-level cap reached
+    decision = enforce_org_reminder_cap(conn, ticket_id, ctx.requester_id, decision, settings)
+
     route(decision, ctx, settings, conn, action_type_map,
           proactivanet_client=proactivanet_client, anthropic_client=anthropic_client)
 
-    apply_transition(conn, ticket_id, decision, ctx.priority)
+    apply_transition(conn, ticket_id, decision, ctx.priority, requester_id=ctx.requester_id)
 
 
 class WorkerThread:
@@ -228,6 +278,7 @@ class WorkerThread:
         *,
         terminal_status_names: frozenset[str] = frozenset(),
         anthropic_client: anthropic.Anthropic | None = None,
+        rag_deps: RagDeps | None = None,
         poll_interval: float = 5.0,
     ) -> None:
         self._conn = conn
@@ -237,6 +288,7 @@ class WorkerThread:
         self._action_type_map = action_type_map
         self._terminal_status_names = terminal_status_names
         self._anthropic_client = anthropic_client
+        self._rag_deps = rag_deps
         self._poll_interval = poll_interval
         self._stop = threading.Event()
         self._thread = threading.Thread(
@@ -282,6 +334,7 @@ class WorkerThread:
                 self._action_type_map,
                 terminal_status_names=self._terminal_status_names,
                 anthropic_client=self._anthropic_client,
+                rag_deps=self._rag_deps,
             )
             mark_event_processed(self._conn, event_id)
             logger.info("Worker: processed event_id=%s ticket=%s", event_id, ticket_id)
