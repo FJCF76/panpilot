@@ -71,10 +71,17 @@ CREATE INDEX IF NOT EXISTS idx_dlq_pending ON dlq (exhausted, next_retry)
     WHERE exhausted = 0;
 
 -- rag_misses: documentation gap report (E3).
--- Written when auto_respond confidence < threshold and no doc coverage found.
+-- Written when RAG auto-response fails (low_confidence or no_doc_coverage).
+-- Retrieval exceptions (ChromaDB unavailable, encode failure) are NOT written here;
+-- those indicate infrastructure failure, not a documentation gap.
 CREATE TABLE IF NOT EXISTS rag_misses (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
     ticket_id        TEXT NOT NULL,
     question_summary TEXT NOT NULL,
-    evaluated_at     TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    evaluated_at     TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    confidence       REAL,              -- NULL for no_doc_coverage; 0.0–1.0 for low_confidence
+    none_reason      TEXT,              -- "low_confidence" | "no_doc_coverage"
+    chunk_sources    TEXT,              -- JSON: [{"title":"...", "filename":"..."}]
+    gap_category     TEXT,              -- Claude-normalized label, e.g. "Configuración de webhooks"
+    gap_explanation  TEXT               -- Spanish explanation of why documentation was insufficient
 );

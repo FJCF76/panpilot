@@ -13,6 +13,7 @@ from panpilot.config import get_settings
 from panpilot.intelligence.models import Decision, TicketContext
 from panpilot.intelligence.rag import (
     RagDeps,
+    _generate_gap_explanation,
     _load_model,
     _parse_rag_decision,
     _write_rag_miss,
@@ -63,6 +64,20 @@ def _mock_claude_response(
         "confidence": confidence,
         "reasoning": reasoning,
     }
+    response = MagicMock()
+    response.content = [block]
+    return response
+
+
+def _mock_gap_response(
+    gap_category: str = "Configuración de webhooks",
+    gap_explanation: str = "La documentación no incluye los pasos de configuración avanzada.",
+) -> MagicMock:
+    """Build a mock Anthropic Message with a record_gap_analysis tool_use block."""
+    block = MagicMock()
+    block.type = "tool_use"
+    block.name = "record_gap_analysis"
+    block.input = {"gap_category": gap_category, "gap_explanation": gap_explanation}
     response = MagicMock()
     response.content = [block]
     return response
@@ -270,11 +285,20 @@ class TestEvaluateWithContext:
 # _write_rag_miss
 # ---------------------------------------------------------------------------
 
+_WRITE_DEFAULTS = dict(
+    confidence=0.72,
+    none_reason="low_confidence",
+    chunk_sources=[{"title": "Manual", "filename": "manual.md"}],
+    gap_category="Configuración de webhooks",
+    gap_explanation="La documentación no incluye los pasos avanzados.",
+)
+
+
 class TestWriteRagMiss:
 
     def test_row_inserted_in_rag_misses(self):
         conn = _conn()
-        _write_rag_miss(conn, "TKT-1", "How to reset password")
+        _write_rag_miss(conn, "TKT-1", "How to reset password", **_WRITE_DEFAULTS)
         row = conn.execute("SELECT * FROM rag_misses WHERE ticket_id='TKT-1'").fetchone()
         assert row is not None
         assert row["question_summary"] == "How to reset password"
@@ -282,9 +306,99 @@ class TestWriteRagMiss:
     def test_summary_truncated_to_200_chars(self):
         conn = _conn()
         long_summary = "x" * 300
-        _write_rag_miss(conn, "TKT-2", long_summary)
+        _write_rag_miss(conn, "TKT-2", long_summary, **_WRITE_DEFAULTS)
         row = conn.execute("SELECT question_summary FROM rag_misses WHERE ticket_id='TKT-2'").fetchone()
         assert len(row["question_summary"]) == 200
+
+    def test_write_rag_miss_stores_all_new_columns(self):
+        conn = _conn()
+        _write_rag_miss(
+            conn, "TKT-3", "Exportar datos",
+            confidence=0.55,
+            none_reason="low_confidence",
+            chunk_sources=[{"title": "Guía", "filename": "guia.md"}],
+            gap_category="Exportación de datos",
+            gap_explanation="No hay documentación sobre formatos de exportación.",
+        )
+        row = conn.execute("SELECT * FROM rag_misses WHERE ticket_id='TKT-3'").fetchone()
+        assert row["confidence"] == pytest.approx(0.55)
+        assert row["none_reason"] == "low_confidence"
+        assert row["gap_category"] == "Exportación de datos"
+        assert row["gap_explanation"] == "No hay documentación sobre formatos de exportación."
+
+    def test_write_rag_miss_chunk_sources_json_serialized(self):
+        import json
+        conn = _conn()
+        sources = [{"title": "Manual", "filename": "manual.md"}]
+        _write_rag_miss(
+            conn, "TKT-4", "Reset password",
+            confidence=None,
+            none_reason="no_doc_coverage",
+            chunk_sources=sources,
+            gap_category="Sin categorizar",
+            gap_explanation="—",
+        )
+        row = conn.execute("SELECT chunk_sources FROM rag_misses WHERE ticket_id='TKT-4'").fetchone()
+        parsed = json.loads(row["chunk_sources"])
+        assert parsed == sources
+
+
+# ---------------------------------------------------------------------------
+# _generate_gap_explanation
+# ---------------------------------------------------------------------------
+
+class TestGenerateGapExplanation:
+
+    def test_low_confidence_calls_tool_and_returns_tuple(self):
+        client = MagicMock()
+        client.messages.create.return_value = _mock_gap_response(
+            gap_category="Exportación de datos",
+            gap_explanation="La guía no cubre el formato CSV.",
+        )
+        settings = get_settings()
+        chunks = [{"document": "Doc.", "metadata": {"title": "Guía"}, "distance": 0.1}]
+        category, explanation = _generate_gap_explanation(
+            _ctx(), chunks, "low_confidence", 0.4, settings, client
+        )
+        assert category == "Exportación de datos"
+        assert explanation == "La guía no cubre el formato CSV."
+        call_kwargs = client.messages.create.call_args[1]
+        tool_names = [t["name"] for t in call_kwargs["tools"]]
+        assert "record_gap_analysis" in tool_names
+        assert call_kwargs["tool_choice"] == {"type": "any"}
+
+    def test_no_doc_coverage_empty_chunks_returns_tuple(self):
+        client = MagicMock()
+        client.messages.create.return_value = _mock_gap_response(
+            gap_category="Sin documentación"
+        )
+        settings = get_settings()
+        category, _ = _generate_gap_explanation(
+            _ctx(), [], "no_doc_coverage", None, settings, client
+        )
+        assert category == "Sin documentación"
+
+    def test_api_error_returns_fallback(self):
+        client = MagicMock()
+        client.messages.create.side_effect = Exception("Network error")
+        settings = get_settings()
+        category, explanation = _generate_gap_explanation(
+            _ctx(), [], "no_doc_coverage", None, settings, client
+        )
+        assert category == "Sin categorizar"
+        assert explanation == "—"
+
+    def test_tool_not_called_returns_fallback(self):
+        response = MagicMock()
+        response.content = []
+        client = MagicMock()
+        client.messages.create.return_value = response
+        settings = get_settings()
+        category, explanation = _generate_gap_explanation(
+            _ctx(), [], "no_doc_coverage", None, settings, client
+        )
+        assert category == "Sin categorizar"
+        assert explanation == "—"
 
 
 # ---------------------------------------------------------------------------
@@ -297,10 +411,14 @@ class TestRagEvaluate:
         conn = _conn()
         settings = get_settings()
         client = MagicMock()
+        client.messages.create.return_value = _mock_gap_response()
         deps = _mock_rag_deps(count=0)
         decision = rag_evaluate(_ctx(), deps, settings, conn, client)
         assert decision.action == "none"
         assert decision.none_reason == "no_doc_coverage"
+        # no_doc_coverage now writes a rag_miss row (bug fix)
+        count = conn.execute("SELECT COUNT(*) FROM rag_misses").fetchone()[0]
+        assert count == 1
 
     def test_high_confidence_returns_auto_respond(self):
         conn = _conn()
@@ -326,7 +444,10 @@ class TestRagEvaluate:
         conn = _conn()
         settings = get_settings()
         client = MagicMock()
-        client.messages.create.return_value = _mock_claude_response(confidence=0.1)
+        client.messages.create.side_effect = [
+            _mock_claude_response(confidence=0.1),
+            _mock_gap_response(),
+        ]
         deps = _mock_rag_deps()
         ctx = _ctx(ticket_id="TKT-MISS", title="Pregunta sin cobertura")
         rag_evaluate(ctx, deps, settings, conn, client)
@@ -337,14 +458,13 @@ class TestRagEvaluate:
         conn = _conn()
         settings = get_settings()
         client = MagicMock()
-        # Claude response omits confidence field
         block = MagicMock()
         block.type = "tool_use"
         block.name = "record_rag_decision"
         block.input = {"response_draft": "Resp.", "reasoning": "Razón.", "confidence": None}
-        response = MagicMock()
-        response.content = [block]
-        client.messages.create.return_value = response
+        rag_response = MagicMock()
+        rag_response.content = [block]
+        client.messages.create.side_effect = [rag_response, _mock_gap_response()]
         deps = _mock_rag_deps()
         decision = rag_evaluate(_ctx(), deps, settings, conn, client)
         assert decision.action == "none"
@@ -369,6 +489,62 @@ class TestRagEvaluate:
         decision = rag_evaluate(_ctx(), deps, settings, conn, client)
         assert decision.action == "none"
         assert decision.none_reason == "no_doc_coverage"
+
+    def test_rag_evaluate_low_confidence_writes_gap_analysis(self):
+        conn = _conn()
+        settings = get_settings()
+        client = MagicMock()
+        client.messages.create.side_effect = [
+            _mock_claude_response(confidence=0.1),
+            _mock_gap_response(gap_category="Configuración de webhooks"),
+        ]
+        deps = _mock_rag_deps()
+        ctx = _ctx(ticket_id="TKT-GAP", title="Configurar webhooks")
+        rag_evaluate(ctx, deps, settings, conn, client)
+        row = conn.execute("SELECT * FROM rag_misses WHERE ticket_id='TKT-GAP'").fetchone()
+        assert row is not None
+        assert row["gap_category"] == "Configuración de webhooks"
+        assert row["none_reason"] == "low_confidence"
+
+    def test_rag_evaluate_no_doc_coverage_now_writes_rag_miss(self):
+        conn = _conn()
+        settings = get_settings()
+        client = MagicMock()
+        client.messages.create.return_value = _mock_gap_response()
+        deps = _mock_rag_deps(count=0)
+        ctx = _ctx(ticket_id="TKT-NODOC")
+        rag_evaluate(ctx, deps, settings, conn, client)
+        row = conn.execute("SELECT * FROM rag_misses WHERE ticket_id='TKT-NODOC'").fetchone()
+        assert row is not None
+        assert row["none_reason"] == "no_doc_coverage"
+        assert row["confidence"] is None
+
+    def test_rag_evaluate_gap_analysis_failure_still_writes_miss(self):
+        """Gap explanation API error must not prevent the rag_miss row from being written."""
+        conn = _conn()
+        settings = get_settings()
+        client = MagicMock()
+        client.messages.create.side_effect = [
+            _mock_claude_response(confidence=0.1),
+            Exception("API error"),
+        ]
+        deps = _mock_rag_deps()
+        ctx = _ctx(ticket_id="TKT-FAIL")
+        rag_evaluate(ctx, deps, settings, conn, client)
+        row = conn.execute("SELECT * FROM rag_misses WHERE ticket_id='TKT-FAIL'").fetchone()
+        assert row is not None
+        assert row["gap_category"] == "Sin categorizar"
+
+    def test_rag_evaluate_retrieval_exception_does_not_write_rag_miss(self):
+        """Infrastructure failures (encode/query error) must NOT write to rag_misses."""
+        conn = _conn()
+        settings = get_settings()
+        client = MagicMock()
+        deps = _mock_rag_deps()
+        deps.model.encode.side_effect = RuntimeError("OOM")
+        rag_evaluate(_ctx(), deps, settings, conn, client)
+        count = conn.execute("SELECT COUNT(*) FROM rag_misses").fetchone()[0]
+        assert count == 0
 
 
 # ---------------------------------------------------------------------------

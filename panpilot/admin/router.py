@@ -10,6 +10,7 @@ The admin interface never reads, writes, or displays environment variables.
 """
 from __future__ import annotations
 
+import json
 import secrets
 import sqlite3
 from pathlib import Path
@@ -165,6 +166,37 @@ def retry_dlq(
 
 
 # ---------------------------------------------------------------------------
+# GET /admin/rag-gaps  — documentation gap data
+# ---------------------------------------------------------------------------
+
+@router.get("/rag-gaps", dependencies=[Depends(_require_auth)])
+def list_rag_gaps(
+    conn: sqlite3.Connection = Depends(_conn),
+) -> JSONResponse:
+    """
+    Return rag_misses data in two structures:
+    - summary: grouped by gap_category with COUNT and latest timestamp
+    - recent: most recent 100 individual miss rows
+    """
+    summary = [
+        dict(r) for r in conn.execute(
+            "SELECT gap_category, COUNT(*) AS count, MAX(evaluated_at) AS latest, "
+            "MAX(CASE WHEN gap_explanation != '—' THEN gap_explanation END) AS sample_explanation "
+            "FROM rag_misses WHERE gap_category IS NOT NULL "
+            "GROUP BY gap_category ORDER BY count DESC LIMIT 50"
+        ).fetchall()
+    ]
+    recent = [
+        dict(r) for r in conn.execute(
+            "SELECT id, ticket_id, question_summary, confidence, none_reason, "
+            "chunk_sources, gap_category, gap_explanation, evaluated_at "
+            "FROM rag_misses ORDER BY evaluated_at DESC LIMIT 100"
+        ).fetchall()
+    ]
+    return JSONResponse({"summary": summary, "recent": recent})
+
+
+# ---------------------------------------------------------------------------
 # GET /admin/  — HTML dashboard
 # ---------------------------------------------------------------------------
 
@@ -210,6 +242,10 @@ _HTML_TEMPLATE = """\
   <!-- DLQ section -->
   <h2>Cola de errores (DLQ)</h2>
   {dlq_section}
+
+  <!-- Lagunas de documentación section -->
+  <h2>Lagunas de documentación</h2>
+  {rag_gaps_section}
 
   <!-- Audit section -->
   <h2>Registro de auditoría <span class="text-muted">(últimas {audit_limit} entradas)</span></h2>
@@ -292,6 +328,92 @@ def _render_audit(rows: list[dict], base_url: str) -> str:
     return "\n".join(parts)
 
 
+def _render_rag_gaps(summary_rows: list[dict], recent_rows: list[dict], base_url: str) -> str:
+    parts: list[str] = []
+
+    parts.append(
+        '<p><strong>Lagunas por categoría</strong>'
+        ' <span class="text-muted">(agrupadas)</span></p>'
+    )
+    if not summary_rows:
+        parts.append(
+            '<p class="text-muted">No hay lagunas de documentación registradas aún.</p>'
+        )
+    else:
+        parts += [
+            '<div style="overflow-x:auto">',
+            "<table>",
+            "<thead><tr>"
+            "<th>Categoría</th><th>Tickets</th><th>Última vez</th><th>Explicación de muestra</th>"
+            "</tr></thead><tbody>",
+        ]
+        for r in summary_rows:
+            parts.append(
+                f'<tr>'
+                f'<td>{_esc(r["gap_category"] or "—")}</td>'
+                f'<td>{r["count"]}</td>'
+                f'<td>{r["latest"] or "—"}</td>'
+                f'<td><small style="word-break:break-word">'
+                f'{_esc(r["sample_explanation"] or "—")}'
+                f'</small></td>'
+                f'</tr>'
+            )
+        parts += ["</tbody></table></div>"]
+
+    parts.append(
+        '<p><strong>Misses individuales</strong>'
+        ' <span class="text-muted">(últimas 100)</span></p>'
+    )
+    if not recent_rows:
+        parts.append('<p class="text-muted">Sin entradas.</p>')
+    else:
+        parts += [
+            '<div style="overflow-x:auto">',
+            "<table>",
+            "<thead><tr>"
+            "<th>Ticket</th><th>Pregunta</th><th>Confianza</th><th>Motivo</th>"
+            "<th>Fuentes recuperadas</th><th>Explicación</th><th>Evaluado</th>"
+            "</tr></thead><tbody>",
+        ]
+        for r in recent_rows:
+            ticket_link = (
+                f'<a href="{_esc(base_url)}/servicedesk/incidents/formIncidents'
+                f'/formIncidents.paw?id={_esc(r["ticket_id"])}"'
+                f' target="_blank" rel="noopener">{_esc(r["ticket_id"])}</a>'
+            )
+            conf_str = f'{r["confidence"]:.0%}' if r["confidence"] is not None else "—"
+            reason_str = (
+                f'<code>{_esc(r["none_reason"])}</code>' if r["none_reason"] else "—"
+            )
+            try:
+                sources = json.loads(r["chunk_sources"] or "[]")
+                titles = [
+                    s.get("title", "") or s.get("filename", "")
+                    for s in sources
+                    if isinstance(s, dict)
+                ]
+                titles = [t for t in titles if t]
+                sources_str = _esc(", ".join(titles)) if titles else "—"
+            except (json.JSONDecodeError, TypeError):
+                sources_str = "—"
+            parts.append(
+                f'<tr>'
+                f'<td>{ticket_link}</td>'
+                f'<td><small style="word-break:break-word">'
+                f'{_esc(r["question_summary"] or "")}</small></td>'
+                f'<td>{conf_str}</td>'
+                f'<td>{reason_str}</td>'
+                f'<td><small style="word-break:break-word">{sources_str}</small></td>'
+                f'<td><small style="word-break:break-word">'
+                f'{_esc(r["gap_explanation"] or "—")}</small></td>'
+                f'<td>{r["evaluated_at"] or "—"}</td>'
+                f'</tr>'
+            )
+        parts += ["</tbody></table></div>"]
+
+    return "\n".join(parts)
+
+
 def _esc(text: str) -> str:
     return (
         text.replace("&", "&amp;")
@@ -338,6 +460,22 @@ def admin_dashboard(
         ).fetchall()
     ]
 
+    rag_summary_rows = [
+        dict(r) for r in conn.execute(
+            "SELECT gap_category, COUNT(*) AS count, MAX(evaluated_at) AS latest, "
+            "MAX(CASE WHEN gap_explanation != '—' THEN gap_explanation END) AS sample_explanation "
+            "FROM rag_misses WHERE gap_category IS NOT NULL "
+            "GROUP BY gap_category ORDER BY count DESC LIMIT 50"
+        ).fetchall()
+    ]
+    rag_recent_rows = [
+        dict(r) for r in conn.execute(
+            "SELECT id, ticket_id, question_summary, confidence, none_reason, "
+            "chunk_sources, gap_category, gap_explanation, evaluated_at "
+            "FROM rag_misses ORDER BY evaluated_at DESC LIMIT 100"
+        ).fetchall()
+    ]
+
     action_options = "\n".join(
         f'<option value="{a}"{"selected" if a == action else ""}>{a}</option>'
         for a in _ACTIONS
@@ -345,6 +483,9 @@ def admin_dashboard(
 
     html = _HTML_TEMPLATE.format(
         dlq_section=_render_dlq(dlq_rows),
+        rag_gaps_section=_render_rag_gaps(
+            rag_summary_rows, rag_recent_rows, settings.proactivanet_base_url
+        ),
         audit_section=_render_audit(audit_rows, settings.proactivanet_base_url),
         audit_limit=audit_limit,
         ticket_id_val=_esc(ticket_id or ""),

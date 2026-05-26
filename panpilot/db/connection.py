@@ -54,6 +54,11 @@ def _migrate(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_ticket_state_requester "
         "ON ticket_state (requester_id) WHERE requester_id IS NOT NULL"
     )
+    _add_column_if_missing(conn, "rag_misses", "confidence", "REAL")
+    _add_column_if_missing(conn, "rag_misses", "none_reason", "TEXT")
+    _add_column_if_missing(conn, "rag_misses", "chunk_sources", "TEXT")
+    _add_column_if_missing(conn, "rag_misses", "gap_category", "TEXT")
+    _add_column_if_missing(conn, "rag_misses", "gap_explanation", "TEXT")
     conn.commit()
 
 

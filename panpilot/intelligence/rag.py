@@ -19,6 +19,7 @@ rather than silently dropped to the DLQ.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import re
 import sqlite3
@@ -29,11 +30,22 @@ import anthropic
 
 from panpilot.config import Settings
 from panpilot.intelligence.models import Decision, TicketContext
-from panpilot.intelligence.prompts import RAG_DECISION_TOOL, build_rag_user_message
+from panpilot.intelligence.prompts import (
+    GAP_ANALYSIS_TOOL,
+    RAG_DECISION_TOOL,
+    build_gap_analysis_message,
+    build_rag_user_message,
+)
 
 logger = logging.getLogger(__name__)
 
 MODEL = "claude-sonnet-4-6"
+_GAP_ANALYSIS_SYSTEM = (
+    "Eres un analista de documentación técnica para Proactivanet S.A.\n"
+    "Tu tarea es identificar lagunas en la documentación de producto basándote en preguntas\n"
+    "de soporte que el sistema no pudo responder automáticamente.\n"
+    "Responde siempre en español. Sé conciso y específico."
+)
 RAG_EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 _CHUNK_HEADER_PATTERN = re.compile(r"(?m)^## ")
 _CHUNK_MAX_CHARS = 1200
@@ -179,11 +191,74 @@ def evaluate_with_context(
     return _parse_rag_decision(response)
 
 
-def _write_rag_miss(conn: sqlite3.Connection, ticket_id: str, summary: str) -> None:
+def _generate_gap_explanation(
+    ctx: TicketContext,
+    chunks: list[dict],
+    none_reason: str,
+    confidence: float | None,
+    settings: Settings,
+    client: anthropic.Anthropic,
+) -> tuple[str, str]:
+    """
+    Call Claude to classify the documentation gap and generate a Spanish explanation.
+
+    Returns (gap_category, gap_explanation). On any exception returns fallback values
+    so that the miss row is still written — explanation data is best-effort.
+    """
+    try:
+        user_message = build_gap_analysis_message(ctx, chunks, none_reason, confidence, settings)
+        response = client.messages.create(
+            model=MODEL,
+            max_tokens=512,
+            system=_GAP_ANALYSIS_SYSTEM,
+            tools=[GAP_ANALYSIS_TOOL],
+            tool_choice={"type": "any"},
+            messages=[{"role": "user", "content": user_message}],
+        )
+        for block in response.content:
+            if block.type == "tool_use" and block.name == "record_gap_analysis":
+                inp = block.input
+                return (
+                    inp.get("gap_category", "Sin categorizar") or "Sin categorizar",
+                    inp.get("gap_explanation", "—") or "—",
+                )
+        logger.warning(
+            "Gap analysis: Claude did not call record_gap_analysis for ticket=%s",
+            ctx.ticket_id,
+        )
+        return ("Sin categorizar", "—")
+    except Exception:
+        logger.warning(
+            "Gap analysis: exception for ticket=%s", ctx.ticket_id, exc_info=True
+        )
+        return ("Sin categorizar", "—")
+
+
+def _write_rag_miss(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    question_summary: str,
+    *,
+    confidence: float | None,
+    none_reason: str,
+    chunk_sources: list[dict],
+    gap_category: str,
+    gap_explanation: str,
+) -> None:
     """Record a documentation gap for admin review."""
     conn.execute(
-        "INSERT INTO rag_misses (ticket_id, question_summary) VALUES (?, ?)",
-        (ticket_id, summary[:200]),
+        "INSERT INTO rag_misses "
+        "(ticket_id, question_summary, confidence, none_reason, chunk_sources, gap_category, gap_explanation) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (
+            ticket_id,
+            question_summary[:200],
+            confidence,
+            none_reason,
+            json.dumps(chunk_sources, ensure_ascii=False),
+            gap_category,
+            gap_explanation,
+        ),
     )
     conn.commit()
 
@@ -221,6 +296,17 @@ def rag_evaluate(
         )
 
     if not chunks:
+        gap_category, gap_explanation = _generate_gap_explanation(
+            ctx, [], "no_doc_coverage", None, settings, client
+        )
+        _write_rag_miss(
+            conn, ctx.ticket_id, ctx.title,
+            confidence=None,
+            none_reason="no_doc_coverage",
+            chunk_sources=[],
+            gap_category=gap_category,
+            gap_explanation=gap_explanation,
+        )
         return Decision(
             action="none",
             reasoning="No se encontró documentación relevante para responder esta consulta.",
@@ -237,7 +323,24 @@ def rag_evaluate(
             settings.confidence_threshold,
             ctx.ticket_id,
         )
-        _write_rag_miss(conn, ctx.ticket_id, ctx.title)
+        chunk_sources = [
+            {
+                "title": c["metadata"].get("title", ""),
+                "filename": c["metadata"].get("filename", ""),
+            }
+            for c in chunks
+        ]
+        gap_category, gap_explanation = _generate_gap_explanation(
+            ctx, chunks, "low_confidence", confidence, settings, client
+        )
+        _write_rag_miss(
+            conn, ctx.ticket_id, ctx.title,
+            confidence=confidence,
+            none_reason="low_confidence",
+            chunk_sources=chunk_sources,
+            gap_category=gap_category,
+            gap_explanation=gap_explanation,
+        )
         return Decision(
             action="none",
             reasoning=(

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import html
 
+from panpilot.config import Settings
 from panpilot.intelligence.models import TicketContext
 
 SYSTEM_PROMPT = """\
@@ -122,6 +123,80 @@ RAG_DECISION_TOOL: dict = {
         "required": ["response_draft", "confidence", "reasoning"],
     },
 }
+
+
+GAP_ANALYSIS_TOOL: dict = {
+    "name": "record_gap_analysis",
+    "description": "Registra el análisis de la laguna documental para mejora de documentación.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "gap_category": {
+                "type": "string",
+                "description": (
+                    "Etiqueta corta (3-6 palabras) que clasifica el tipo de laguna documental. "
+                    "Ej: 'Configuración de webhooks', 'Instalación en Windows Server', "
+                    "'Integración con Active Directory'."
+                ),
+            },
+            "gap_explanation": {
+                "type": "string",
+                "maxLength": 300,
+                "description": (
+                    "Explicación en español (20-40 palabras) de por qué la documentación no fue "
+                    "suficiente. Ej: 'La documentación confirma que la funcionalidad existe pero "
+                    "no incluye los pasos de configuración avanzada.'"
+                ),
+            },
+        },
+        "required": ["gap_category", "gap_explanation"],
+    },
+}
+
+
+def build_gap_analysis_message(
+    ctx: TicketContext,
+    chunks: list[dict],
+    none_reason: str,
+    confidence: float | None,
+    settings: Settings,
+) -> str:
+    """Build the gap analysis user message for Claude."""
+    title_esc = html.escape(ctx.title)
+    desc_esc = html.escape((ctx.description or "")[:400])
+
+    if chunks:
+        assert confidence is not None, "confidence must be float when chunks are provided"
+        docs_block = "\n".join(
+            f"[Documento: {html.escape(c['metadata'].get('title', ''))}]\n"
+            f"{html.escape(c['document'])}"
+            for c in chunks
+        )
+        return (
+            f"Ticket de soporte que no pudo responderse automáticamente.\n"
+            f"Confianza obtenida: {confidence:.0%}"
+            f" (umbral: {settings.confidence_threshold:.0%})\n\n"
+            f"<ticket>\n"
+            f"Título: {title_esc}\n"
+            f"Descripción: {desc_esc}\n"
+            f"</ticket>\n\n"
+            f"Fragmentos de documentación recuperados:\n"
+            f"<docs>\n"
+            f"{docs_block}\n"
+            f"</docs>\n\n"
+            f"Analiza por qué la documentación existente no fue suficiente para responder con confianza.\n"
+            f"Clasifica el tipo de laguna y proporciona una explicación breve."
+        )
+    return (
+        f"Ticket de soporte que no pudo responderse automáticamente.\n"
+        f"No se encontró ningún fragmento de documentación relevante en la base de conocimiento.\n\n"
+        f"<ticket>\n"
+        f"Título: {title_esc}\n"
+        f"Descripción: {desc_esc}\n"
+        f"</ticket>\n\n"
+        f"Clasifica el tipo de pregunta para identificar qué tema falta en la documentación.\n"
+        f"La explicación debe indicar que no se encontró documentación sobre este tema."
+    )
 
 
 def build_user_message(ctx: TicketContext) -> str:

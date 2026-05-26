@@ -58,6 +58,25 @@ def _insert_event(conn: sqlite3.Connection, event_id: str = "evt-1", processed: 
     conn.commit()
 
 
+def _insert_rag_miss(
+    conn: sqlite3.Connection,
+    ticket_id: str = "TKT-001",
+    question_summary: str = "¿Cómo configurar webhooks?",
+    confidence: float | None = 0.72,
+    none_reason: str = "low_confidence",
+    chunk_sources: str = '[{"title": "Manual", "filename": "manual.md"}]',
+    gap_category: str | None = "Configuración de webhooks",
+    gap_explanation: str | None = "La documentación no incluye pasos avanzados.",
+) -> None:
+    conn.execute(
+        "INSERT INTO rag_misses "
+        "(ticket_id, question_summary, confidence, none_reason, chunk_sources, gap_category, gap_explanation) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (ticket_id, question_summary, confidence, none_reason, chunk_sources, gap_category, gap_explanation),
+    )
+    conn.commit()
+
+
 def _insert_dlq(conn: sqlite3.Connection, event_id: str = "evt-1", exhausted: int = 1) -> int:
     cur = conn.execute(
         "INSERT INTO dlq (event_id, error, attempts, exhausted) VALUES (?, ?, ?, ?)",
@@ -397,3 +416,78 @@ def test_dashboard_requires_auth():
     client = _test_client(conn)
     resp = client.get("/admin/")
     assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Rag gaps endpoint and dashboard section
+# ---------------------------------------------------------------------------
+
+def test_rag_gaps_endpoint_requires_auth():
+    conn = _in_memory_conn()
+    client = _test_client(conn)
+    resp = client.get("/admin/rag-gaps")
+    assert resp.status_code == 401
+
+
+def test_rag_gaps_returns_summary_and_recent():
+    conn = _in_memory_conn()
+    _insert_rag_miss(conn, ticket_id="TKT-A", gap_category="Exportación CSV")
+    _insert_rag_miss(conn, ticket_id="TKT-B", gap_category="Exportación CSV")
+    _insert_rag_miss(conn, ticket_id="TKT-C", gap_category="Instalación Windows")
+    client = _test_client(conn)
+    data = client.get("/admin/rag-gaps", headers=_basic_auth()).json()
+    assert "summary" in data
+    assert "recent" in data
+    assert len(data["recent"]) == 3
+    categories = [r["gap_category"] for r in data["summary"]]
+    assert "Exportación CSV" in categories
+    assert data["summary"][0]["count"] == 2  # most frequent first
+
+
+def test_rag_gaps_handles_null_gap_category_rows():
+    conn = _in_memory_conn()
+    _insert_rag_miss(conn, ticket_id="TKT-LEGACY", gap_category=None)
+    _insert_rag_miss(conn, ticket_id="TKT-NEW", gap_category="Webhooks")
+    client = _test_client(conn)
+    data = client.get("/admin/rag-gaps", headers=_basic_auth()).json()
+    # Null-category row excluded from summary
+    assert len(data["summary"]) == 1
+    assert data["summary"][0]["gap_category"] == "Webhooks"
+    # Both rows present in recent
+    assert len(data["recent"]) == 2
+
+
+def test_rag_gaps_section_rendered_in_dashboard():
+    conn = _in_memory_conn()
+    _insert_rag_miss(conn, ticket_id="TKT-GAP")
+    client = _test_client(conn)
+    resp = client.get("/admin/", headers=_basic_auth())
+    assert resp.status_code == 200
+    assert "Lagunas de documentación" in resp.text
+    assert "TKT-GAP" in resp.text
+
+
+def test_rag_gaps_empty_state_shows_message():
+    conn = _in_memory_conn()
+    client = _test_client(conn)
+    resp = client.get("/admin/", headers=_basic_auth())
+    assert resp.status_code == 200
+    assert "No hay lagunas de documentación registradas aún." in resp.text
+
+
+def test_rag_gaps_null_explanation_displays_dash():
+    conn = _in_memory_conn()
+    _insert_rag_miss(conn, ticket_id="TKT-NULL", gap_explanation=None)
+    client = _test_client(conn)
+    resp = client.get("/admin/", headers=_basic_auth())
+    assert resp.status_code == 200
+    assert "—" in resp.text
+
+
+def test_rag_gaps_malformed_chunk_sources_displays_dash():
+    conn = _in_memory_conn()
+    _insert_rag_miss(conn, ticket_id="TKT-BAD", chunk_sources="NOT JSON")
+    client = _test_client(conn)
+    resp = client.get("/admin/", headers=_basic_auth())
+    assert resp.status_code == 200  # must not 500
+    assert "—" in resp.text
