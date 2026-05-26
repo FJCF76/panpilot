@@ -258,8 +258,8 @@ def _write_rag_miss(
             confidence,
             none_reason,
             json.dumps(chunk_sources, ensure_ascii=False),
-            gap_category,
-            gap_explanation,
+            gap_category[:100],
+            gap_explanation[:300],
         ),
     )
     conn.commit()

@@ -733,8 +733,14 @@ class TestSelfTriggerLoopGuard:
                 )
         mock_route.assert_not_called()
 
-    def test_auto_resp_not_awaiting_still_evaluates(self):
-        """AUTO_RESP + RequestedUserComments=False (customer replied) → re-evaluate."""
+    def test_auto_resp_not_awaiting_skips_evaluate(self):
+        """AUTO_RESP + RequestedUserComments=False → still skipped.
+
+        AutomaticResponse annotations do not set RequestedUserComments=True, so
+        every subsequent Guardado arrives with RequestedUserComments=False — we
+        cannot distinguish the self-trigger Guardado from a customer update.
+        Always skip to prevent the infinite annotation loop (REQ 2026-000016).
+        """
         conn = _conn()
         conn.execute(
             "INSERT INTO ticket_state (ticket_id, state, priority, clarification_count) "
@@ -742,13 +748,29 @@ class TestSelfTriggerLoopGuard:
         )
         conn.commit()
         # _payload() defaults RequestedUserComments=False
-        with patch("panpilot.worker.runner.evaluate_ticket", return_value=_mock_decision("none")) as mock_eval:
+        with patch("panpilot.worker.runner.evaluate_ticket") as mock_eval:
             with patch("panpilot.worker.runner.route"):
                 process_event(
                     _event(), get_settings(), conn,
                     _PRIORITY_MAP, _STATUS_MAP, _ACTION_TYPE_MAP,
                 )
-        mock_eval.assert_called_once()
+        mock_eval.assert_not_called()
+
+    def test_auto_resp_not_awaiting_skips_route(self):
+        """AUTO_RESP + RequestedUserComments=False → route() never called."""
+        conn = _conn()
+        conn.execute(
+            "INSERT INTO ticket_state (ticket_id, state, priority, clarification_count) "
+            "VALUES ('TKT-001', 'AUTO_RESP', 'P2', 0)",
+        )
+        conn.commit()
+        with patch("panpilot.worker.runner.evaluate_ticket"):
+            with patch("panpilot.worker.runner.route") as mock_route:
+                process_event(
+                    _event(), get_settings(), conn,
+                    _PRIORITY_MAP, _STATUS_MAP, _ACTION_TYPE_MAP,
+                )
+        mock_route.assert_not_called()
 
     def test_no_prior_state_still_evaluates(self):
         """No existing ticket_state row → new ticket, should be evaluated."""

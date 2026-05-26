@@ -166,7 +166,8 @@ def build_gap_analysis_message(
     desc_esc = html.escape((ctx.description or "")[:400])
 
     if chunks:
-        assert confidence is not None, "confidence must be float when chunks are provided"
+        if confidence is None:
+            raise ValueError("confidence must be float when chunks are provided")
         docs_block = "\n".join(
             f"[Documento: {html.escape(c['metadata'].get('title', ''))}]\n"
             f"{html.escape(c['document'])}"

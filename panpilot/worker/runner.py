@@ -218,17 +218,27 @@ def process_event(
         return
 
     # Self-trigger guard for annotation-driven states.
-    # When PanPilot posts an annotation, Proactivanet may set RequestedUserComments=True
-    # and fires a Guardado.  That Guardado must NOT re-evaluate — PanPilot just acted.
-    # Only re-evaluate when RequestedUserComments=False (customer replied or unrelated update).
     #
-    #   CLR_REQ + RequestedUserComments=True  → PanPilot's clarify reflected back; skip.
-    #   AUTO_RESP + RequestedUserComments=True → PanPilot's auto_respond reflected back; skip.
-    #   Either state + RequestedUserComments=False → customer replied; evaluate.
-    if _current_state in {"CLR_REQ", "AUTO_RESP"} and bool(payload.get("RequestedUserComments")):
+    # CLR_REQ: posting a UserTextQuestion annotation sets RequestedUserComments=True in
+    # Proactivanet.  A Guardado arriving with RequestedUserComments=True is the self-trigger
+    # (PanPilot's question reflected back) — skip it.  When the customer replies,
+    # RequestedUserComments goes False and the Guardado is processed normally.
+    if _current_state == "CLR_REQ" and bool(payload.get("RequestedUserComments")):
         logger.info(
-            "Worker: skipping %s self-trigger for ticket=%s (awaiting_client_reply=True)",
-            _current_state,
+            "Worker: skipping CLR_REQ self-trigger for ticket=%s (awaiting_client_reply=True)",
+            ticket_id,
+        )
+        return
+
+    # AUTO_RESP: posting an AutomaticResponse annotation does NOT set RequestedUserComments=True
+    # in Proactivanet (it is an informational reply, not a question).  Every subsequent Guardado
+    # therefore arrives with RequestedUserComments=False regardless of whether it is PanPilot's
+    # own self-trigger or a customer update — there is no reliable signal to distinguish the two.
+    # Always skip when in AUTO_RESP to prevent the infinite annotation loop observed in
+    # production (REQ 2026-000016 received 5 identical auto_respond annotations).
+    if _current_state == "AUTO_RESP":
+        logger.info(
+            "Worker: skipping AUTO_RESP self-trigger for ticket=%s",
             ticket_id,
         )
         return

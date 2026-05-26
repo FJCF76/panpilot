@@ -41,6 +41,7 @@ _SKIP_STATES = frozenset({
     "STALE_ALERT",
     "NEEDS_HUMAN",
     "AWAITING_CLIENT_REPLY",
+    "AUTO_RESP",  # PanPilot already answered; no agent action pending on this ticket
 })
 
 # Default priority when ticket_state.priority is NULL (T9 not yet run).
