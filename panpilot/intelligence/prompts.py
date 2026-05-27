@@ -50,7 +50,7 @@ comments and annotations.
 do not use bold (**text**), italics (*text*), headers (# or ##), bullet symbols \
 (- or *), or backtick code blocks. For lists, use plain numbered format \
 (1. 2. 3.) followed by plain text. Use short paragraphs separated by blank lines.
-- reasoning must be 2-3 sentences explaining WHY you chose this action, not what it is.
+- reasoning must be 2-3 sentences in Spanish explaining WHY you chose this action, not what it is.
 - When uncertain between acting and not acting, prefer none over a potentially wrong action.\
 """
 
@@ -68,7 +68,7 @@ DECISION_TOOL: dict = {
             "reasoning": {
                 "type": "string",
                 "description": (
-                    "2-3 sentences explaining why this action was chosen. "
+                    "2-3 sentences in Spanish explaining why this action was chosen. "
                     "Focus on WHY, not what the action is."
                 ),
             },
@@ -117,7 +117,7 @@ RAG_DECISION_TOOL: dict = {
             },
             "reasoning": {
                 "type": "string",
-                "description": "2-3 sentences on why this answer is or isn't well-supported by the docs.",
+                "description": "2-3 sentences in Spanish on why this answer is or isn't well-supported by the docs.",
             },
         },
         "required": ["response_draft", "confidence", "reasoning"],

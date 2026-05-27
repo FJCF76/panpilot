@@ -280,6 +280,25 @@ class TestEvaluateWithContext:
         assert decision.action == "auto_respond"
         assert decision.confidence == pytest.approx(0.92)
 
+    def test_system_prompt_passed_to_claude(self):
+        """evaluate_with_context passes _RAG_SYSTEM_PROMPT as system= to Claude."""
+        from panpilot.intelligence.rag import _RAG_SYSTEM_PROMPT
+        settings = get_settings()
+        client = MagicMock()
+        client.messages.create.return_value = _mock_claude_response()
+        ctx = _ctx()
+        chunks = [{"document": "Doc content.", "metadata": {}, "distance": 0.1}]
+
+        evaluate_with_context(ctx, chunks, settings, client)
+
+        call_kwargs = client.messages.create.call_args[1]
+        assert call_kwargs.get("system") == _RAG_SYSTEM_PROMPT
+
+    def test_system_prompt_requires_spanish_reasoning(self):
+        """The RAG system prompt instructs Claude to write reasoning in Spanish."""
+        from panpilot.intelligence.rag import _RAG_SYSTEM_PROMPT
+        assert "Spanish" in _RAG_SYSTEM_PROMPT or "español" in _RAG_SYSTEM_PROMPT.lower()
+
 
 # ---------------------------------------------------------------------------
 # _write_rag_miss

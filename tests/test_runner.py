@@ -1102,3 +1102,25 @@ class TestRagWiringInProcessEvent:
         routed = mock_route.call_args[0][0]
         assert routed.action == "none"
         assert routed.none_reason == "low_confidence"
+
+    def test_rag_auto_respond_reasoning_translated_before_audit(self, monkeypatch):
+        """RAG Pass 2 auto_respond reasoning passes through _translate_to_spanish before DB write."""
+        translated_calls: list[str] = []
+        monkeypatch.setattr(
+            "panpilot.execution.audit._translate_to_spanish",
+            lambda text, client: translated_calls.append(text) or "Razonamiento en español.",
+        )
+        conn = _conn()
+        english_reasoning = "Documentation directly answers the webhook configuration question."
+        rag_d = Decision(action="auto_respond", reasoning=english_reasoning, response_draft="Respuesta.")
+        deps = _mock_rag_deps(available=True)
+        with patch("panpilot.worker.runner.evaluate_ticket", return_value=_mock_decision("auto_respond")):
+            with patch("panpilot.worker.runner.rag_evaluate", return_value=rag_d):
+                process_event(
+                    _event(), get_settings(), conn,
+                    _PRIORITY_MAP, _STATUS_MAP, _ACTION_TYPE_MAP,
+                    rag_deps=deps,
+                )
+        assert english_reasoning in translated_calls
+        row = conn.execute("SELECT reasoning FROM audit_log").fetchone()
+        assert row["reasoning"] == "Razonamiento en español."

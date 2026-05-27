@@ -40,6 +40,11 @@ from panpilot.intelligence.prompts import (
 logger = logging.getLogger(__name__)
 
 MODEL = "claude-sonnet-4-6"
+_RAG_SYSTEM_PROMPT = (
+    "You are a documentation retrieval assistant for Proactivanet S.A. support.\n"
+    "Review the ticket and documentation excerpts provided, then call record_rag_decision.\n"
+    "reasoning must be written in Spanish."
+)
 _GAP_ANALYSIS_SYSTEM = (
     "Eres un analista de documentación técnica para Proactivanet S.A.\n"
     "Tu tarea es identificar lagunas en la documentación de producto basándote en preguntas\n"
@@ -184,6 +189,7 @@ def evaluate_with_context(
     response = client.messages.create(
         model=MODEL,
         max_tokens=1024,
+        system=_RAG_SYSTEM_PROMPT,
         tools=[RAG_DECISION_TOOL],
         tool_choice={"type": "any"},
         messages=[{"role": "user", "content": user_message}],
