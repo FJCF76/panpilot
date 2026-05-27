@@ -1,6 +1,6 @@
 [project]
 name = "panpilot"
-version = "0.2.3"
+version = "0.3.0"
 description = "AI automation layer for Proactivanet support team"
 requires-python = ">=3.12"
 dependencies = [

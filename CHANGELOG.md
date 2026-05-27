@@ -4,6 +4,38 @@ All notable changes to PanPilot are documented here.
 
 ---
 
+## [0.3.0] - 2026-05-27
+
+### Added
+
+**H18 Gap 1 — Intake fix: tech-contact WAITING detection**
+- `_mark_waiting_for_client()` in `intake/router.py` — writes `ticket_state.state = 'WAITING'` when a non-PanPilot `PublishedAction` annotation is detected inside an `En anotación` event, before the event is dropped.
+- Before dropping any `En anotación` event, the router peeks at the `Annotations` array:
+  - If all annotations are from PanPilot (`PawSvcAuthUsers_id == PROACTIVANET_AUTHOR_ID`) — drop as before (loop guard intact).
+  - If any annotation is from a different author AND matches `PublishedAction` (checked via UUID from `app.state.action_type_map`, with `ActionType` / `Type` string fallback) — transition ticket to WAITING, then drop.
+  - Tickets already in `NEEDS_HUMAN` or `AUTO_RESP` are guarded: no WAITING override.
+- The event is still dropped after the state write — no Claude evaluation is triggered. This is a narrowing of the existing loop guard, not a relaxation.
+
+**H18 Gap 2 — Proactive reminder scheduler**
+- `send_proactive_reminders()` in `intake/scheduler.py` — queries `ticket_state WHERE state='WAITING'`, finds tickets past `REMINDER_THRESHOLD_HOURS` (default 24h) with no recent remind in the audit log, enforces per-ticket and org caps, and routes a fixed Spanish reminder template via the standard `route()` path.
+- `run_reminder_scheduler()` — module-level APScheduler entry point (mirrors `run_stale_detector`).
+- `build_scheduler()` now registers `reminder_scheduler` job on `REMINDER_POLL_HOURS` (default 8h) interval alongside the existing `stale_detector`.
+- Fixed reminder template: `"Estimado cliente, le contactamos para recordarle que su solicitud de soporte sigue pendiente de su respuesta..."` — no Claude call at scheduler time; professional, generic, safe.
+- Audit-log de-duplication: `apply_transition()` resets `updated_at` on every call, so the authoritative repeat suppressor is the last `action='remind'` entry in the audit log, not `updated_at`.
+
+**New config keys**
+- `REMINDER_POLL_HOURS` (default `8`) — how often the reminder scheduler runs.
+- `REMINDER_THRESHOLD_HOURS` (default `24`) — hours of WAITING silence before a reminder fires.
+
+### Tests
+
+- 21 new tests:
+  - 10 webhook intake fix: loop guard regression (all-PanPilot still dropped), UUID match → WAITING, ActionType string fallback → WAITING, Type string fallback → WAITING, internal Annotation type → no WAITING, empty/missing Annotations → no WAITING, NEEDS_HUMAN guard, AUTO_RESP guard, stored=False preserved.
+  - 11 reminder scheduler: fresh below threshold, past threshold, multiple tickets, recent audit suppression, old audit allows repeat, non-WAITING skipped, per-ticket cap escalation, remind decision/draft content, routing failure per-ticket isolation, build_scheduler registers job.
+- Total: 485 tests
+
+---
+
 ## [0.2.3] - 2026-05-27
 
 ### Fixed
