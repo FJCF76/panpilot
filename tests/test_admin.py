@@ -513,3 +513,107 @@ def test_rag_gaps_malformed_chunk_sources_displays_dash():
     resp = client.get("/admin/", headers=_basic_auth())
     assert resp.status_code == 200  # must not 500
     assert "—" in resp.text
+
+
+# ---------------------------------------------------------------------------
+# _fmt_ts unit tests
+# ---------------------------------------------------------------------------
+
+def test_fmt_ts_formats_iso_timestamp():
+    from panpilot.admin.router import _fmt_ts
+    assert _fmt_ts("2026-05-27T14:30:00") == "27/05/2026 14:30"
+
+
+def test_fmt_ts_handles_z_suffix():
+    from panpilot.admin.router import _fmt_ts
+    assert _fmt_ts("2026-05-27T14:30:00Z") == "27/05/2026 14:30"
+
+
+def test_fmt_ts_returns_dash_for_none():
+    from panpilot.admin.router import _fmt_ts
+    assert _fmt_ts(None) == "—"
+
+
+def test_fmt_ts_returns_original_on_bad_input():
+    from panpilot.admin.router import _fmt_ts
+    assert _fmt_ts("not-a-date") == "not-a-date"
+
+
+# ---------------------------------------------------------------------------
+# New dashboard integration tests
+# ---------------------------------------------------------------------------
+
+def test_dashboard_shows_formatted_timestamp():
+    conn = _in_memory_conn()
+    conn.execute(
+        "INSERT INTO audit_log (ticket_id, action, none_reason, reasoning, dry_run, evaluated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        ("TKT-TS", "none", "no_action_warranted", "", 0, "2026-05-27T14:30:00"),
+    )
+    conn.commit()
+    client = _test_client(conn)
+    resp = client.get("/admin/", headers=_basic_auth())
+    assert "27/05/2026 14:30" in resp.text
+    assert "2026-05-27T14:30:00" not in resp.text
+
+
+def test_dashboard_shows_activo_when_not_dry_run(monkeypatch):
+    monkeypatch.setenv("DRY_RUN", "false")
+    from panpilot.config import get_settings
+    get_settings.cache_clear()
+    conn = _in_memory_conn()
+    client = _test_client(conn)
+    resp = client.get("/admin/", headers=_basic_auth())
+    assert "● Activo" in resp.text
+    assert "status-active" in resp.text
+    get_settings.cache_clear()
+
+
+def test_dashboard_shows_modo_prueba_when_dry_run(monkeypatch):
+    monkeypatch.setenv("DRY_RUN", "true")
+    from panpilot.config import get_settings
+    get_settings.cache_clear()
+    conn = _in_memory_conn()
+    client = _test_client(conn)
+    resp = client.get("/admin/", headers=_basic_auth())
+    assert "● Modo prueba" in resp.text
+    assert "status-test" in resp.text
+    get_settings.cache_clear()
+
+
+def test_dashboard_shows_metric_cards():
+    conn = _in_memory_conn()
+    client = _test_client(conn)
+    resp = client.get("/admin/", headers=_basic_auth())
+    assert "Evaluaciones hoy" in resp.text
+    assert "Auto-respuestas enviadas" in resp.text
+    assert "Aclaraciones solicitadas" in resp.text
+    assert "Lagunas detectadas" in resp.text
+
+
+def test_dashboard_action_badge_class():
+    conn = _in_memory_conn()
+    _insert_audit(conn, ticket_id="TKT-BADGE", action="auto_respond")
+    client = _test_client(conn)
+    resp = client.get("/admin/", headers=_basic_auth())
+    assert "badge-auto_respond" in resp.text
+
+
+def test_dashboard_dlq_agotado_badge():
+    conn = _in_memory_conn()
+    _insert_event(conn, "evt-agotado")
+    _insert_dlq(conn, "evt-agotado", exhausted=1)
+    client = _test_client(conn)
+    resp = client.get("/admin/", headers=_basic_auth())
+    assert "badge-agotado-si" in resp.text
+
+
+def test_dashboard_filter_no_results_shows_limpiar_link():
+    conn = _in_memory_conn()
+    _insert_audit(conn, ticket_id="TKT-EXISTS")
+    client = _test_client(conn)
+    resp = client.get("/admin/?ticket_id=TKT-NONEXISTENT", headers=_basic_auth())
+    assert "No se encontraron evaluaciones" in resp.text
+    assert "Limpiar filtros" in resp.text
+
+
