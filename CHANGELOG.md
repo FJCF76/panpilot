@@ -4,6 +4,39 @@ All notable changes to PanPilot are documented here.
 
 ---
 
+## [0.4.0] - 2026-05-27
+
+### Added
+
+**T5 Admin dashboard — full redesign**
+- Dark navy sidebar with embedded PanPilot logo (base64 PNG), three-tab navigation (Registro de auditoría, Lagunas de documentación, Cola de errores), and "Proactivanet · ITSM" footer branding.
+- Four metric cards at the top: evaluaciones hoy, auto-respuestas enviadas, aclaraciones solicitadas, lagunas detectadas — with colored numbers and emoji icons.
+- "● Activo / ● DRY RUN" live status badge in the header.
+- Sidebar resize handle with `localStorage` persistence; 12 px drag hit zone via `::before`.
+- Client-side tab switching (one section visible at a time; default: Registro de auditoría).
+- Client-side pagination for the audit log — 25 rows per page, "Mostrando N a M de P evaluaciones" footer, ← / → page controls.
+- Timestamp formatting: `_fmt_ts()` helper converts ISO strings to DD/MM/YYYY HH:MM throughout all three tabs.
+- Action badges: `auto_respond` (green), `clarify` (blue), `remind` (orange), `alert` (yellow), `none` (gray).
+- Dry-run and DLQ exhausted badges with distinct color coding.
+- DLQ tab: Reintentar button, next-retry timestamp, attempts counter, error message preview.
+- Lagunas tab: category summary table (tickets per gap category, last seen, sample explanation) + full RAG-misses detail table with confidence %, motivo, and source chunks.
+- ARIA landmarks (`role="navigation"`, `role="main"`), keyboard navigation (`tabindex="0"`, Enter/Space), and focus-visible ring for accessibility.
+- `overflow-x: auto` on all tables for narrow-viewport safety.
+
+### Security
+
+- All user-visible strings passed through `_esc()` (HTML-entity escaping) to prevent stored XSS.
+- `_load_logo()` uses `try/except OSError` — no crash on missing or unreadable logo file.
+- `_fmt_ts()` escapes the raw fallback string (XSS guard for malformed DB timestamps).
+- Pagination JS uses `textContent` and DOM manipulation — no `innerHTML` anywhere.
+
+### Tests
+
+- 51 new tests covering auth, metric card values, tab sections, action/dry-run badges, timestamp rendering, pagination navigation and footer, filter controls, DLQ retry form, Lagunas summary and detail tables, logo presence, reasoning `<pre>` wrap, and XSS escaping on all user-visible fields.
+- Total: 496 tests.
+
+---
+
 ## [0.3.0] - 2026-05-27
 
 ### Added
