@@ -323,8 +323,7 @@ def _render_audit(rows: list[dict], base_url: str) -> str:
             f'<td>{r["evaluated_at"]}</td>'
             f'<td><code>{r["action"]}</code></td>'
             f'<td>{dr}</td>'
-            f'<td><small style="overflow:hidden;display:-webkit-box;'
-            f'-webkit-line-clamp:4;-webkit-box-orient:vertical;word-break:break-word">'
+            f'<td><small style="white-space:pre-wrap;word-break:break-word">'
             f'{_esc(str(r["reasoning"] or ""))}</small></td></tr>'
         )
     parts += ["</tbody></table></div>"]

@@ -4,6 +4,33 @@ All notable changes to PanPilot are documented here.
 
 ---
 
+## [0.2.3] - 2026-05-27
+
+### Fixed
+
+- **`_translate_to_spanish()` inverted language on Spanish input** — `_TRANSLATE_PROMPT` said "Translate the following text to Spanish"; when given already-Spanish reasoning (produced by the `_RAG_SYSTEM_PROMPT` fix in 0.2.2), Haiku interpreted the Spanish text as the source and returned an English translation, storing English in the audit log. Fixed: prompt now explicitly checks "if English, translate to Spanish; if already Spanish, return unchanged." Confirmed end-to-end: `auto_respond` audit entries now store Spanish reasoning correctly.
+- **Admin dashboard reasoning column truncation** — the reasoning `<td>` used `-webkit-line-clamp:4` and `overflow:hidden`, cutting off the reasoning text after four lines. Replaced with `white-space:pre-wrap` so full reasoning is always visible.
+
+### Tests
+
+- 2 new tests: dashboard reasoning not truncated (no `line-clamp`/`overflow:hidden`), reasoning cell uses `white-space:pre-wrap`.
+- Total: 464 tests
+
+---
+
+## [0.2.2] - 2026-05-27
+
+### Fixed
+
+- **RAG Pass 2 reasoning in Spanish** — `evaluate_with_context()` had no system prompt, so Claude wrote `reasoning` in English. If the `_translate_to_spanish()` call in `write_audit()` then failed silently (exception caught), English reasoning was stored in the audit log. Fixed on two fronts: (1) `evaluate_with_context()` now passes `_RAG_SYSTEM_PROMPT` as `system=`, requiring Spanish reasoning at the source; (2) `RAG_DECISION_TOOL` reasoning description updated to "in Spanish." Pass 1 `SYSTEM_PROMPT` and `DECISION_TOOL` reasoning descriptions updated to match, so both passes are consistent.
+
+### Tests
+
+- 3 new tests: `evaluate_with_context` system prompt wiring, system prompt Spanish requirement, runner integration verifying RAG `auto_respond` reasoning passes through `_translate_to_spanish` before audit DB write.
+- Total: 462 tests
+
+---
+
 ## [0.2.1] - 2026-05-26
 
 Production bug fixes and defensive hardening surfaced during live-mode validation.

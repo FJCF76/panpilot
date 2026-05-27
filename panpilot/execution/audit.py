@@ -17,8 +17,11 @@ from panpilot.intelligence.models import Decision
 logger = logging.getLogger(__name__)
 
 _TRANSLATE_PROMPT = (
-    "Translate the following text to Spanish, preserving technical terms. "
-    "Output only the translation, no preamble.\n\n"
+    "The following text is either in English or already in Spanish. "
+    "If it is in English, translate it to Spanish. "
+    "If it is already in Spanish, return it unchanged. "
+    "Preserve technical terms. "
+    "Output only the result, no preamble.\n\n"
 )
 
 

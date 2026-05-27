@@ -419,6 +419,27 @@ def test_dashboard_requires_auth():
     assert resp.status_code == 401
 
 
+def test_dashboard_reasoning_not_truncated():
+    # Full reasoning text must appear in the response without line-clamp or
+    # overflow:hidden cutting it off.
+    long_reasoning = "A" * 600
+    conn = _in_memory_conn()
+    _insert_audit(conn, ticket_id="TKT-REASON", reasoning=long_reasoning)
+    client = _test_client(conn)
+    resp = client.get("/admin/", headers=_basic_auth())
+    assert long_reasoning in resp.text
+    assert "-webkit-line-clamp" not in resp.text
+    assert "overflow:hidden" not in resp.text
+
+
+def test_dashboard_reasoning_cell_uses_pre_wrap():
+    conn = _in_memory_conn()
+    _insert_audit(conn, ticket_id="TKT-WRAP", reasoning="Some reasoning text")
+    client = _test_client(conn)
+    resp = client.get("/admin/", headers=_basic_auth())
+    assert "white-space:pre-wrap" in resp.text
+
+
 # ---------------------------------------------------------------------------
 # Rag gaps endpoint and dashboard section
 # ---------------------------------------------------------------------------
