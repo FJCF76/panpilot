@@ -295,19 +295,6 @@ sudo systemctl restart panpilot
 
 ---
 
-## 🗺️ Roadmap — v0.4.0
-
-Lo que viene después:
-
-| Funcionalidad | Descripción |
-|--------------|-------------|
-| 🔄 **Gestión de seguimientos** | Manejo del ciclo completo de respuesta al cliente: cuando el cliente responde a una aclaración, PanPilot retoma el hilo automáticamente |
-| 🏢 **Soporte multi-instancia** | Una sola instalación de PanPilot gestionando múltiples instancias de Proactivanet simultáneamente — ideal para MSPs y empresas con múltiples entornos |
-| 📧 **Alertas de DLQ exhausted** | Notificación proactiva (correo o webhook) cuando una entrada de la cola de errores se agota — sin necesidad de monitorear `journalctl` manualmente |
-| 🏷️ **Exclusión manual activada** | Campo personalizado de Proactivanet para marcar tickets que PanPilot debe ignorar completamente |
-
----
-
 ## 📚 Documentación técnica
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — arquitectura de tres capas, máquina de estados, modelo de datos, decisiones de diseño
