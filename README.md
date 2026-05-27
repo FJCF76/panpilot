@@ -42,7 +42,7 @@ Se conecta a Proactivanet mediante webhook, evalúa cada ticket con Claude AI, y
 | Recordatorios enviados manualmente | Horas de seguimiento | Cero |
 | Aclaraciones redundantes enviadas al mismo cliente | Sin límite | Máximo 2 por ticket, 3 por organización cada 3 días |
 
-> **Una operación de soporte que responde en segundos para preguntas documentadas y nunca pierde un SLA es una ventaja competitiva directa en cualquier licitación ITSM.**
+> **Una operación de soporte que responde en segundos para preguntas documentadas y nunca pierde un SLA es una ventaja competitiva directa.**
 
 ---
 
