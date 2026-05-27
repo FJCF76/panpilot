@@ -14,8 +14,8 @@
 [![ChromaDB](https://img.shields.io/badge/ChromaDB-RAG-8B5CF6?style=flat-square)](https://trychroma.com)
 [![SQLite](https://img.shields.io/badge/SQLite-WAL-003B57?style=flat-square&logo=sqlite&logoColor=white)](https://sqlite.org)
 [![nginx](https://img.shields.io/badge/nginx-TLS-009639?style=flat-square&logo=nginx&logoColor=white)](https://nginx.org)
-[![Tests](https://img.shields.io/badge/Tests-464_✓-22C55E?style=flat-square)](tests/)
-[![Versión](https://img.shields.io/badge/versión-0.2.3-6366F1?style=flat-square)](CHANGELOG.md)
+[![Tests](https://img.shields.io/badge/Tests-485_✓-22C55E?style=flat-square)](tests/)
+[![Versión](https://img.shields.io/badge/versión-0.3.0-6366F1?style=flat-square)](CHANGELOG.md)
 
 </div>
 
@@ -68,7 +68,9 @@ Si el ticket llega sin la información necesaria para diagnosticar el problema, 
 
 ### 3. ⏰ Recordatorios automáticos — sin perseguir a nadie
 
-Cuando un técnico asignado no ha respondido en el tiempo esperado, PanPilot envía un recordatorio educado. Sin que ningún coordinador tenga que hacer seguimiento manual.
+Cuando un técnico envía una respuesta al cliente y este no contesta, PanPilot detecta la espera y envía un recordatorio proactivo al solicitante sin que ningún coordinador tenga que hacer seguimiento manual.
+
+**Dos mecanismos en paralelo:** cuando el webhook de `En anotación` llega y confirma que un técnico contactó al cliente, el ticket pasa a estado WAITING. El planificador revisa cada 8 horas si algún ticket en WAITING lleva más de 24 horas sin respuesta del cliente — y si es así, envía el recordatorio automáticamente, aunque no haya habido ningún evento de Proactivanet en ese intervalo.
 
 **Control anti-spam:** máximo 2 recordatorios por ticket. A nivel de organización, si el mismo solicitante ha recibido 3 recordatorios en los últimos 3 días en distintos tickets, PanPilot escala en lugar de seguir enviando mensajes. Sin spam, sin fatiga de notificaciones.
 
@@ -76,7 +78,7 @@ Cuando un técnico asignado no ha respondido en el tiempo esperado, PanPilot env
 
 ### 4. 🚨 Detección de tickets inactivos — ningún SLA se rompe en silencio
 
-Un detector programado revisa continuamente el estado de los tickets abiertos. Cuando un ticket supera el umbral de inactividad según su prioridad, PanPilot registra una alerta interna y notifica al equipo antes de que el SLA se rompa.
+Un detector programado **se ejecuta cada 10 minutos** y revisa el estado de los tickets abiertos. Cuando un ticket supera el umbral de inactividad según su prioridad, PanPilot registra una alerta interna y notifica al equipo antes de que el SLA se rompa.
 
 | Prioridad | Umbral de inactividad |
 |----------|----------------------|
@@ -90,7 +92,7 @@ Un detector programado revisa continuamente el estado de los tickets abiertos. C
 
 ## 🖥️ Panel de administración
 
-Accesible en `/admin/` con autenticación HTTP Basic Auth.
+Accesible en `/admin/` con autenticación HTTP Basic Auth. El panel tiene tres pestañas: **Auditoría**, **Lagunas de documentación**, y **Cola de errores (DLQ)**.
 
 ### 📋 Registro de auditoría completo
 
@@ -108,7 +110,7 @@ Cada decisión que PanPilot toma queda registrada: el ticket, la acción ejecuta
 
 Cada entrada enlaza directamente al ticket en Proactivanet. El razonamiento completo siempre es visible — sin truncamiento.
 
-### 🗺️ Lagunas de documentación — el mapa de lo que no sabes que no sabes
+### 🗺️ Pestaña: Lagunas de documentación
 
 Cuando PanPilot intenta responder un ticket automáticamente y no tiene suficiente documentación para hacerlo con confianza, registra la pregunta en la tabla de **lagunas de documentación** (`rag_misses`). Claude categoriza automáticamente cada laguna y explica por qué la documentación existente fue insuficiente.
 
@@ -134,22 +136,34 @@ Los eventos que fallan se encolan con backoff exponencial (30 s → 5 min → 30
 
 ```mermaid
 flowchart TD
-    A[🔔 Proactivanet envía webhook] --> B[PanPilot recibe y persiste el evento]
+    subgraph Entrada1["📥 Entrada reactiva"]
+        A1["🔔 Proactivanet webhook\nCreación · Guardado · En anotación · Cambio de estado"]
+    end
+
+    subgraph Entrada2["⏱️ Entrada proactiva (planificador)"]
+        A2S["🔍 Stale detector\ncada 10 min"]
+        A2R["📬 Reminder scheduler\ncada 8 h"]
+    end
+
+    A1 --> B[PanPilot recibe y persiste el evento]
     B --> C{¿Ya procesado?}
     C -->|Duplicado| D[🔕 Ignorado silenciosamente]
     C -->|Nuevo| E[Worker lo recoge]
 
+    A2S -->|Ticket inactivo > umbral P1/P2/P3| N[🚨 Alerta interna al equipo]
+    A2R -->|Ticket en WAITING > 24 h sin respuesta| M[⏰ Recordatorio al cliente]
+
     E --> F[Pase 1: Claude evalúa el ticket]
     F --> G{¿Qué acción?}
 
-    G -->|auto_respond| H[Pase 2: RAG recupera documentación]
+    G -->|auto_respond| H["Pase 2: RAG recupera documentación\nsentence-transformers + ChromaDB local"]
     H --> I{¿Confianza ≥ 85%?}
     I -->|Sí| J[✅ Claude redacta respuesta]
     I -->|No| K[📝 Laguna registrada en rag_misses]
 
     G -->|clarify| L[❓ Solicitud de aclaración al cliente]
-    G -->|remind| M[⏰ Recordatorio al técnico]
-    G -->|alert| N[🚨 Alerta interna al equipo]
+    G -->|remind| M
+    G -->|alert| N
 
     J --> O[Anotación publicada en Proactivanet]
     L --> O
@@ -158,6 +172,7 @@ flowchart TD
 
     O --> Q[📊 Registro en audit_log en español]
     P --> Q
+    N --> Q
 ```
 
 **Garantías de confiabilidad:**
@@ -280,7 +295,7 @@ sudo systemctl restart panpilot
 
 ---
 
-## 🗺️ Roadmap — v0.3.0
+## 🗺️ Roadmap — v0.4.0
 
 Lo que viene después:
 
