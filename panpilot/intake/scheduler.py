@@ -30,6 +30,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from panpilot.config import Settings, get_settings
 from panpilot.db.connection import get_connection, main_db_path
 from panpilot.execution.router import route
+from panpilot.intelligence.caps import enforce_org_reminder_cap, enforce_reminder_cap
 from panpilot.intelligence.models import Decision, TicketContext
 from panpilot.intelligence.state_machine import apply_transition
 
@@ -179,6 +180,129 @@ def run_stale_detector(action_type_map: dict[str, str]) -> None:
         conn.close()
 
 
+_REMINDER_RESPONSE_DRAFT = (
+    "Estimado cliente, le contactamos para recordarle que su solicitud "
+    "de soporte sigue pendiente de su respuesta. En cuanto podamos "
+    "recibir la información necesaria, continuaremos con la gestión de "
+    "su ticket. Gracias por su atención."
+)
+
+
+def send_proactive_reminders(
+    conn: sqlite3.Connection,
+    settings: Settings,
+    action_type_map: dict[str, str],
+) -> int:
+    """
+    Find WAITING tickets past the reminder threshold and send proactive reminders.
+
+    Returns the number of reminders sent.  DRY_RUN is enforced by route().
+
+    De-duplication: apply_transition() resets updated_at on every call including
+    after sending a reminder, so the updated_at check is only a quick pre-filter.
+    The audit-log guard (last remind entry) is the authoritative repeat suppressor.
+    """
+    now = datetime.now(timezone.utc)
+    threshold = timedelta(hours=settings.reminder_threshold_hours)
+
+    rows = conn.execute(
+        "SELECT ticket_id, priority, updated_at, reminder_count, requester_id "
+        "FROM ticket_state WHERE state = 'WAITING'",
+    ).fetchall()
+
+    reminders_sent = 0
+
+    for row in rows:
+        ticket_id: str = row["ticket_id"]
+        updated_at_raw: str = row["updated_at"]
+        updated_at = datetime.fromisoformat(updated_at_raw.replace("Z", "+00:00"))
+
+        if now - updated_at < threshold:
+            continue
+
+        # Audit-log de-duplication: skip if already reminded within this threshold window.
+        last_remind = conn.execute(
+            "SELECT evaluated_at FROM audit_log "
+            "WHERE ticket_id=? AND action='remind' "
+            "ORDER BY evaluated_at DESC LIMIT 1",
+            (ticket_id,),
+        ).fetchone()
+        if last_remind:
+            last_remind_at = datetime.fromisoformat(
+                last_remind["evaluated_at"].replace("Z", "+00:00")
+            )
+            if now - last_remind_at < threshold:
+                continue
+
+        hours_inactive = (now - updated_at).total_seconds() / 3600
+        decision = Decision(
+            action="remind",
+            reasoning=(
+                f"El ticket lleva {hours_inactive:.0f}h sin respuesta del cliente. "
+                "Se envía recordatorio proactivo."
+            ),
+            response_draft=_REMINDER_RESPONSE_DRAFT,
+        )
+
+        decision = enforce_reminder_cap(conn, ticket_id, decision, settings)
+        requester_id: str | None = row["requester_id"]
+        decision = enforce_org_reminder_cap(conn, ticket_id, requester_id, decision, settings)
+
+        code_row = conn.execute(
+            "SELECT ticket_code FROM audit_log "
+            "WHERE ticket_id=? AND ticket_code IS NOT NULL "
+            "ORDER BY evaluated_at DESC LIMIT 1",
+            (ticket_id,),
+        ).fetchone()
+        ticket_code: str | None = code_row["ticket_code"] if code_row else None
+
+        ctx = TicketContext(
+            ticket_id=ticket_id,
+            title="",
+            description="",
+            status="WAITING",
+            priority=row["priority"] or _DEFAULT_PRIORITY,
+            # updated_at approximates the tech-contact or last-reminder time.
+            created_at=updated_at_raw,
+            last_modified=updated_at_raw,
+            awaiting_client_reply=True,
+            ticket_code=ticket_code,
+        )
+
+        try:
+            route(decision, ctx, settings, conn, action_type_map)
+            apply_transition(conn, ticket_id, decision, ctx.priority)
+            logger.info(
+                "Proactive reminder: ticket=%s inactive=%.1fh",
+                ticket_id,
+                hours_inactive,
+            )
+            reminders_sent += 1
+        except Exception:
+            logger.exception("Failed to send proactive reminder for ticket=%s", ticket_id)
+
+    return reminders_sent
+
+
+def run_reminder_scheduler(action_type_map: dict[str, str]) -> None:
+    """
+    Module-level APScheduler job function for proactive reminders (H18 Gap 2).
+
+    Must be module-level (not a closure) so APScheduler can serialise it by
+    dotted import path when persisting to the SQLite job store.
+    """
+    settings = get_settings()
+    conn = get_connection(main_db_path(settings))
+    try:
+        count = send_proactive_reminders(conn, settings, action_type_map)
+        if count:
+            logger.info("Reminder scheduler: %d reminder(s) sent", count)
+    except Exception:
+        logger.exception("Reminder scheduler job error")
+    finally:
+        conn.close()
+
+
 def build_scheduler(
     settings: Settings,
     action_type_map: dict[str, str],
@@ -212,6 +336,14 @@ def build_scheduler(
         "interval",
         minutes=settings.stale_alert_poll_minutes,
         id="stale_detector",
+        replace_existing=True,
+        kwargs={"action_type_map": action_type_map},
+    )
+    scheduler.add_job(
+        run_reminder_scheduler,
+        "interval",
+        hours=settings.reminder_poll_hours,
+        id="reminder_scheduler",
         replace_existing=True,
         kwargs={"action_type_map": action_type_map},
     )

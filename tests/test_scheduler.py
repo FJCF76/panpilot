@@ -17,6 +17,7 @@ from panpilot.intake.scheduler import (
     _threshold_for,
     build_scheduler,
     detect_stale_tickets,
+    send_proactive_reminders,
 )
 
 
@@ -400,3 +401,168 @@ def test_scheduler_starts_and_stops(tmp_path, monkeypatch):
     assert scheduler.running
     scheduler.shutdown(wait=False)
     assert not scheduler.running
+
+
+def test_build_scheduler_registers_reminder_job(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    scheduler = build_scheduler(get_settings(), _ACTION_TYPE_MAP)
+    job_ids = [j.id for j in scheduler.get_jobs()]
+    assert "reminder_scheduler" in job_ids
+
+
+# ---------------------------------------------------------------------------
+# H18 Gap 2 — send_proactive_reminders
+# ---------------------------------------------------------------------------
+
+def _insert_waiting(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    hours_old: float,
+    priority: str = "P2",
+    reminder_count: int = 0,
+    requester_id: str | None = None,
+) -> None:
+    updated_at = _past_iso(hours_old)
+    conn.execute(
+        "INSERT INTO ticket_state "
+        "(ticket_id, state, priority, updated_at, reminder_count, requester_id) "
+        "VALUES (?, 'WAITING', ?, ?, ?, ?)",
+        (ticket_id, priority, updated_at, reminder_count, requester_id),
+    )
+    conn.commit()
+
+
+def _insert_audit_remind(
+    conn: sqlite3.Connection,
+    ticket_id: str,
+    hours_ago: float,
+    dry_run: int = 1,
+) -> None:
+    evaluated_at = _past_iso(hours_ago)
+    conn.execute(
+        "INSERT INTO audit_log (ticket_id, action, reasoning, dry_run, evaluated_at) "
+        "VALUES (?, 'remind', 'test', ?, ?)",
+        (ticket_id, dry_run, evaluated_at),
+    )
+    conn.commit()
+
+
+def _run_reminders(conn: sqlite3.Connection) -> int:
+    with patch("panpilot.intake.scheduler.route") as mock_route:
+        mock_route.return_value = None
+        return send_proactive_reminders(conn, get_settings(), _ACTION_TYPE_MAP)
+
+
+def test_reminder_fresh_waiting_below_threshold_no_send():
+    conn = _conn()
+    _insert_waiting(conn, "TKT-R1", hours_old=12.0)  # threshold is 24h by default
+    assert _run_reminders(conn) == 0
+
+
+def test_reminder_waiting_past_threshold_sends():
+    conn = _conn()
+    _insert_waiting(conn, "TKT-R1", hours_old=25.0)
+    assert _run_reminders(conn) == 1
+
+
+def test_reminder_multiple_waiting_all_reminded():
+    conn = _conn()
+    _insert_waiting(conn, "TKT-R1", hours_old=25.0)
+    _insert_waiting(conn, "TKT-R2", hours_old=30.0)
+    assert _run_reminders(conn) == 2
+
+
+def test_reminder_recent_audit_log_suppresses_repeat():
+    conn = _conn()
+    _insert_waiting(conn, "TKT-R1", hours_old=30.0)
+    _insert_audit_remind(conn, "TKT-R1", hours_ago=5.0)  # reminded 5h ago, threshold 24h
+    assert _run_reminders(conn) == 0
+
+
+def test_reminder_old_audit_log_allows_repeat():
+    conn = _conn()
+    _insert_waiting(conn, "TKT-R1", hours_old=30.0)
+    _insert_audit_remind(conn, "TKT-R1", hours_ago=25.0)  # reminded 25h ago — past threshold
+    assert _run_reminders(conn) == 1
+
+
+def test_reminder_non_waiting_state_not_reminded():
+    conn = _conn()
+    conn.execute(
+        "INSERT INTO ticket_state (ticket_id, state, priority, updated_at) "
+        "VALUES ('TKT-R1', 'CLR_REQ', 'P2', ?)",
+        (_past_iso(30.0),),
+    )
+    conn.commit()
+    assert _run_reminders(conn) == 0
+
+
+def test_reminder_per_ticket_cap_escalates():
+    conn = _conn()
+    _insert_waiting(conn, "TKT-R1", hours_old=25.0, reminder_count=2)  # default cap is 2
+    calls = []
+
+    def _capture(*args, **kwargs):
+        calls.append(args[0])  # first arg is the Decision
+
+    with patch("panpilot.intake.scheduler.route", side_effect=_capture):
+        with patch("panpilot.intake.scheduler.apply_transition"):
+            send_proactive_reminders(conn, get_settings(), _ACTION_TYPE_MAP)
+
+    assert len(calls) == 1
+    assert calls[0].action == "none"
+    assert calls[0].none_reason == "needs_human"
+
+
+def test_reminder_decision_action_is_remind():
+    conn = _conn()
+    _insert_waiting(conn, "TKT-R1", hours_old=25.0)
+    calls = []
+
+    def _capture(*args, **kwargs):
+        calls.append(args[0])
+
+    with patch("panpilot.intake.scheduler.route", side_effect=_capture):
+        with patch("panpilot.intake.scheduler.apply_transition"):
+            send_proactive_reminders(conn, get_settings(), _ACTION_TYPE_MAP)
+
+    assert len(calls) == 1
+    assert calls[0].action == "remind"
+
+
+def test_reminder_response_draft_is_spanish():
+    conn = _conn()
+    _insert_waiting(conn, "TKT-R1", hours_old=25.0)
+    calls = []
+
+    def _capture(*args, **kwargs):
+        calls.append(args[0])
+
+    with patch("panpilot.intake.scheduler.route", side_effect=_capture):
+        with patch("panpilot.intake.scheduler.apply_transition"):
+            send_proactive_reminders(conn, get_settings(), _ACTION_TYPE_MAP)
+
+    draft = calls[0].response_draft or ""
+    assert "Estimado cliente" in draft
+
+
+def test_reminder_routing_failure_does_not_crash_loop():
+    """An exception in route() for one ticket does not prevent others from being reminded."""
+    conn = _conn()
+    _insert_waiting(conn, "TKT-R1", hours_old=25.0)
+    _insert_waiting(conn, "TKT-R2", hours_old=25.0)
+    call_count = 0
+
+    def _fail_first(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise RuntimeError("simulated API failure")
+
+    with patch("panpilot.intake.scheduler.route", side_effect=_fail_first):
+        with patch("panpilot.intake.scheduler.apply_transition"):
+            count = send_proactive_reminders(conn, get_settings(), _ACTION_TYPE_MAP)
+
+    # One failed, one succeeded
+    assert count == 1

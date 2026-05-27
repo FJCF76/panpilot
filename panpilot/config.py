@@ -42,6 +42,10 @@ class Settings(BaseSettings):
     reminder_org_max: int = 3          # T17: max reminders to same requester across all tickets within window
     reminder_org_window_days: int = 3
 
+    # Reminder scheduler thresholds (H18 Gap 2)
+    reminder_poll_hours: int = 8          # how often the reminder scheduler runs
+    reminder_threshold_hours: int = 24    # hours of WAITING silence before a reminder fires
+
     # Stale detection thresholds (T6)
     stale_threshold_p1_hours: int = 4
     stale_threshold_p2_hours: int = 24
