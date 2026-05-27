@@ -62,6 +62,44 @@ _MAX_WEBHOOK_BODY = 1 * 1024 * 1024  # 1 MiB
 # Proactivanet may use slightly different capitalisation; normalise to lower.
 _IGNORED_EVENT_TYPES: frozenset[str] = frozenset({"en anotación", "en anotacion"})
 
+# Action type names that indicate a customer-visible message was sent.
+# Used by the H18 Gap 1 intake fix to detect tech-to-client contact.
+_CUSTOMER_FACING_TYPES: frozenset[str] = frozenset({"PublishedAction"})
+
+
+def _mark_waiting_for_client(conn: sqlite3.Connection, ticket_id: str) -> None:
+    """
+    Transition a ticket to WAITING when a non-PanPilot PublishedAction is detected.
+
+    Guards against overriding NEEDS_HUMAN or AUTO_RESP (states where PanPilot has
+    stood down from autonomous action).  Uses UPSERT so both new and existing tickets
+    are handled; existing priority is preserved, P2 is the default for new entries.
+    """
+    current = conn.execute(
+        "SELECT state FROM ticket_state WHERE ticket_id=?", (ticket_id,)
+    ).fetchone()
+    if current and current["state"] in {"NEEDS_HUMAN", "AUTO_RESP"}:
+        logger.debug(
+            "Skipping WAITING transition: ticket=%s state=%s (PanPilot stood down)",
+            ticket_id,
+            current["state"],
+        )
+        return
+    conn.execute(
+        """
+        INSERT INTO ticket_state (ticket_id, state, priority, updated_at)
+        VALUES (?, 'WAITING',
+                COALESCE((SELECT priority FROM ticket_state WHERE ticket_id=?), 'P2'),
+                strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+        ON CONFLICT(ticket_id) DO UPDATE SET
+            state      = 'WAITING',
+            updated_at = excluded.updated_at
+        """,
+        (ticket_id, ticket_id),
+    )
+    conn.commit()
+    logger.info("Tech-contact WAITING transition: ticket=%s", ticket_id)
+
 
 def _conn() -> Generator[sqlite3.Connection, None, None]:
     settings = get_settings()
@@ -109,9 +147,38 @@ async def receive_webhook(
         raise HTTPException(status_code=413, detail="Payload too large")
 
     # Loop guard: drop event types that would trigger re-evaluation of our own
-    # annotations.  Log the payload once at WARNING so operators can identify
-    # the author-field name if they need it in the future.
+    # annotations.  Before dropping, peek at Annotations to detect a non-PanPilot
+    # PublishedAction (H18 Gap 1 fix): if a technician wrote to the client, transition
+    # the ticket to WAITING so the proactive reminder scheduler can follow up.
     if event_type.lower() in _IGNORED_EVENT_TYPES:
+        try:
+            _peeked: Any = json.loads(body)
+        except Exception:
+            _peeked = None
+        if isinstance(_peeked, dict) and "Annotations" in _peeked:
+            _guard_annotations: list[dict[str, Any]] = _peeked.get("Annotations") or []
+            _panpilot_author = settings.proactivanet_author_id
+            # Resolve PublishedAction UUID via app.state (populated at startup).
+            # Falls back to {} in tests or before lifespan completes.
+            _atm: dict[str, str] = getattr(request.app.state, "action_type_map", {})
+            _published_uuid = _atm.get("PublishedAction")
+            _non_panpilot_published = [
+                a for a in _guard_annotations
+                if isinstance(a, dict)
+                and a.get("PawSvcAuthUsers_id") != _panpilot_author
+                and (
+                    (_published_uuid and a.get("ActionTypeId") == _published_uuid)
+                    or a.get("ActionType") in _CUSTOMER_FACING_TYPES
+                    or a.get("Type") in _CUSTOMER_FACING_TYPES
+                )
+            ]
+            if _non_panpilot_published:
+                _ticket_id_raw = (
+                    _peeked.get("Incident", {}).get("IncidentId")
+                    or _peeked.get("Incident", {}).get("Id")
+                )
+                if _ticket_id_raw:
+                    _mark_waiting_for_client(conn, str(_ticket_id_raw))
         logger.warning(
             "Dropping ignored event_type=%r — loop guard (payload follows for author-field discovery): %s",
             event_type,
@@ -140,7 +207,8 @@ async def receive_webhook(
             annotations: list[dict[str, Any]] = payload.get("Annotations") or []
             panpilot_author = settings.proactivanet_author_id
             if panpilot_author and annotations and all(
-                a.get("PawSvcAuthUsers_id") == panpilot_author for a in annotations
+                isinstance(a, dict) and a.get("PawSvcAuthUsers_id") == panpilot_author
+                for a in annotations
             ):
                 logger.info(
                     "Loop guard: dropping annotation webhook — all %d annotation(s) from PanPilot (author=%s)",

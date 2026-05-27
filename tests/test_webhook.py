@@ -283,3 +283,197 @@ def test_json_array_body_stores_nothing():
     )
     count = conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
     assert count == 0
+
+
+# ---------------------------------------------------------------------------
+# H18 Gap 1 — En anotación intake fix: tech-contact WAITING transition
+# ---------------------------------------------------------------------------
+
+_ATM_H18 = {
+    "Annotation": "uuid-annotation",
+    "UserTextQuestion": "uuid-clarify",
+    "AutomaticResponse": "uuid-auto",
+    "PublishedAction": "uuid-remind",
+}
+
+PANPILOT_AUTHOR = "panpilot-author-uuid"
+HUMAN_TECH = "human-tech-uuid"
+
+
+def _client_h18(conn: sqlite3.Connection) -> TestClient:
+    """TestClient with action_type_map set on app.state (simulates lifespan)."""
+    import os
+    os.environ.setdefault("PROACTIVANET_AUTHOR_ID", PANPILOT_AUTHOR)
+    from panpilot.config import get_settings
+    get_settings.cache_clear()
+
+    app = FastAPI()
+    app.include_router(intake_router)
+    app.state.action_type_map = _ATM_H18
+
+    def _override_conn():
+        yield conn
+
+    app.dependency_overrides[_conn] = _override_conn
+    app.dependency_overrides[_verify_secret] = lambda: None
+    return TestClient(app)
+
+
+def _annotation_payload(author_id: str, action_type_id: str, ticket_id: str = "TKT-H18") -> dict:
+    """Shape 3 annotation webhook payload."""
+    return {
+        "Incident": {
+            "IncidentId": ticket_id,
+            "Title": "Test ticket",
+            "DateLastModified": "2026-05-27T10:00:00Z",
+        },
+        "Action": 5,
+        "Annotations": [
+            {
+                "PawSvcAuthUsers_id": author_id,
+                "ActionTypeId": action_type_id,
+                "Text": "Tech wrote to client.",
+            }
+        ],
+    }
+
+
+def test_en_anotacion_panpilot_only_no_waiting(monkeypatch):
+    """All-PanPilot En anotación: loop guard — no WAITING transition."""
+    monkeypatch.setenv("PROACTIVANET_AUTHOR_ID", PANPILOT_AUTHOR)
+    get_settings.cache_clear()
+    conn = _conn_mem()
+    _client_h18(conn).post(
+        "/webhook?event_type=En+anotaci%C3%B3n",
+        json=_annotation_payload(PANPILOT_AUTHOR, "uuid-remind"),
+    )
+    row = conn.execute("SELECT state FROM ticket_state WHERE ticket_id='TKT-H18'").fetchone()
+    assert row is None
+
+
+def test_en_anotacion_non_panpilot_published_uuid_sets_waiting(monkeypatch):
+    """Non-PanPilot PublishedAction (UUID match) → WAITING state written."""
+    monkeypatch.setenv("PROACTIVANET_AUTHOR_ID", PANPILOT_AUTHOR)
+    get_settings.cache_clear()
+    conn = _conn_mem()
+    _client_h18(conn).post(
+        "/webhook?event_type=En+anotaci%C3%B3n",
+        json=_annotation_payload(HUMAN_TECH, "uuid-remind"),
+    )
+    row = conn.execute("SELECT state FROM ticket_state WHERE ticket_id='TKT-H18'").fetchone()
+    assert row is not None and row["state"] == "WAITING"
+
+
+def test_en_anotacion_non_panpilot_published_actiontype_string_sets_waiting(monkeypatch):
+    """Non-PanPilot PublishedAction via ActionType string fallback → WAITING."""
+    monkeypatch.setenv("PROACTIVANET_AUTHOR_ID", PANPILOT_AUTHOR)
+    get_settings.cache_clear()
+    conn = _conn_mem()
+    payload = {
+        "Incident": {"IncidentId": "TKT-H18", "Title": "T"},
+        "Action": 5,
+        "Annotations": [{"PawSvcAuthUsers_id": HUMAN_TECH, "ActionType": "PublishedAction"}],
+    }
+    _client_h18(conn).post("/webhook?event_type=En+anotaci%C3%B3n", json=payload)
+    row = conn.execute("SELECT state FROM ticket_state WHERE ticket_id='TKT-H18'").fetchone()
+    assert row is not None and row["state"] == "WAITING"
+
+
+def test_en_anotacion_non_panpilot_type_string_sets_waiting(monkeypatch):
+    """Non-PanPilot PublishedAction via Type string fallback → WAITING."""
+    monkeypatch.setenv("PROACTIVANET_AUTHOR_ID", PANPILOT_AUTHOR)
+    get_settings.cache_clear()
+    conn = _conn_mem()
+    payload = {
+        "Incident": {"IncidentId": "TKT-H18", "Title": "T"},
+        "Action": 5,
+        "Annotations": [{"PawSvcAuthUsers_id": HUMAN_TECH, "Type": "PublishedAction"}],
+    }
+    _client_h18(conn).post("/webhook?event_type=En+anotaci%C3%B3n", json=payload)
+    row = conn.execute("SELECT state FROM ticket_state WHERE ticket_id='TKT-H18'").fetchone()
+    assert row is not None and row["state"] == "WAITING"
+
+
+def test_en_anotacion_non_panpilot_internal_annotation_no_waiting(monkeypatch):
+    """Non-PanPilot but internal Annotation type → no WAITING (not customer-visible)."""
+    monkeypatch.setenv("PROACTIVANET_AUTHOR_ID", PANPILOT_AUTHOR)
+    get_settings.cache_clear()
+    conn = _conn_mem()
+    _client_h18(conn).post(
+        "/webhook?event_type=En+anotaci%C3%B3n",
+        json=_annotation_payload(HUMAN_TECH, "uuid-annotation"),
+    )
+    row = conn.execute("SELECT state FROM ticket_state WHERE ticket_id='TKT-H18'").fetchone()
+    assert row is None
+
+
+def test_en_anotacion_empty_annotations_no_waiting(monkeypatch):
+    """Empty Annotations list → no WAITING."""
+    monkeypatch.setenv("PROACTIVANET_AUTHOR_ID", PANPILOT_AUTHOR)
+    get_settings.cache_clear()
+    conn = _conn_mem()
+    payload = {"Incident": {"IncidentId": "TKT-H18"}, "Action": 5, "Annotations": []}
+    _client_h18(conn).post("/webhook?event_type=En+anotaci%C3%B3n", json=payload)
+    row = conn.execute("SELECT state FROM ticket_state WHERE ticket_id='TKT-H18'").fetchone()
+    assert row is None
+
+
+def test_en_anotacion_no_annotations_key_no_waiting(monkeypatch):
+    """En anotación payload without Annotations key → no WAITING (safe drop)."""
+    monkeypatch.setenv("PROACTIVANET_AUTHOR_ID", PANPILOT_AUTHOR)
+    get_settings.cache_clear()
+    conn = _conn_mem()
+    _client_h18(conn).post(
+        "/webhook?event_type=En+anotaci%C3%B3n",
+        json=_payload(),
+    )
+    row = conn.execute("SELECT state FROM ticket_state WHERE ticket_id='TKT-001'").fetchone()
+    assert row is None
+
+
+def test_en_anotacion_needs_human_not_overridden(monkeypatch):
+    """If ticket is already NEEDS_HUMAN, WAITING transition is skipped."""
+    monkeypatch.setenv("PROACTIVANET_AUTHOR_ID", PANPILOT_AUTHOR)
+    get_settings.cache_clear()
+    conn = _conn_mem()
+    conn.execute(
+        "INSERT INTO ticket_state (ticket_id, state, priority, updated_at) "
+        "VALUES ('TKT-H18', 'NEEDS_HUMAN', 'P2', '2026-05-27T09:00:00.000Z')"
+    )
+    conn.commit()
+    _client_h18(conn).post(
+        "/webhook?event_type=En+anotaci%C3%B3n",
+        json=_annotation_payload(HUMAN_TECH, "uuid-remind"),
+    )
+    row = conn.execute("SELECT state FROM ticket_state WHERE ticket_id='TKT-H18'").fetchone()
+    assert row["state"] == "NEEDS_HUMAN"
+
+
+def test_en_anotacion_auto_resp_not_overridden(monkeypatch):
+    """If ticket is already AUTO_RESP, WAITING transition is skipped."""
+    monkeypatch.setenv("PROACTIVANET_AUTHOR_ID", PANPILOT_AUTHOR)
+    get_settings.cache_clear()
+    conn = _conn_mem()
+    conn.execute(
+        "INSERT INTO ticket_state (ticket_id, state, priority, updated_at) "
+        "VALUES ('TKT-H18', 'AUTO_RESP', 'P2', '2026-05-27T09:00:00.000Z')"
+    )
+    conn.commit()
+    _client_h18(conn).post(
+        "/webhook?event_type=En+anotaci%C3%B3n",
+        json=_annotation_payload(HUMAN_TECH, "uuid-remind"),
+    )
+    row = conn.execute("SELECT state FROM ticket_state WHERE ticket_id='TKT-H18'").fetchone()
+    assert row["state"] == "AUTO_RESP"
+
+
+def test_en_anotacion_still_returns_stored_false_after_waiting(monkeypatch):
+    """Even when WAITING is set, the event is still dropped (stored=False)."""
+    monkeypatch.setenv("PROACTIVANET_AUTHOR_ID", PANPILOT_AUTHOR)
+    get_settings.cache_clear()
+    conn = _conn_mem()
+    resp = _client_h18(conn).post(
+        "/webhook?event_type=En+anotaci%C3%B3n",
+        json=_annotation_payload(HUMAN_TECH, "uuid-remind"),
+    )
+    assert resp.json()["stored"] is False
