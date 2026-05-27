@@ -35,7 +35,7 @@ Se conecta a Proactivanet mediante webhook, evalúa cada ticket con Claude AI, y
 
 | Métrica | Sin PanPilot | Con PanPilot |
 |--------|-------------|--------------|
-| Tickets L1 resueltos sin intervención humana | 0 % | hasta 30–40 % |
+| Tickets L1 resueltos sin intervención humana | 0 % | mucho más que 0% |
 | Tiempo promedio hasta primera respuesta | Variable (depende de carga) | Segundos |
 | Tickets que superan SLA sin que nadie lo note | Frecuente | Alerta automática antes del vencimiento |
 | Preguntas repetidas de "no tenemos documentación" | Invisibles | Registradas, categorizadas y priorizadas |
