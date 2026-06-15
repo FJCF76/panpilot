@@ -4,6 +4,47 @@ All notable changes to PanPilot are documented here.
 
 ---
 
+## [0.4.1] - 2026-06-16
+
+### Fixed
+
+**Proactivanet as source of truth for scheduler state**
+
+PanPilot's stale detector and reminder scheduler now verify ticket state in
+Proactivanet before acting. Previously, both schedulers trusted local SQLite
+state exclusively, causing three production failure modes: deleted tickets
+continued receiving stale alerts indefinitely (their rows never cleaned up after
+the 404); externally closed tickets kept firing reminders; and tickets modified
+in Proactivanet without a webhook fired alerts prematurely due to clock drift.
+
+The fix is action-triggered: only tickets that already pass both local filters
+(staleness threshold + audit-log suppression) make a GET call to Proactivanet.
+A 1,000-ticket deployment sees at most N GET calls per run where N is the count
+of actually-actionable tickets — not a full sweep.
+
+Deleted or terminal tickets transition to a new `CLOSED_EXTERNALLY` state and
+are permanently excluded from scheduler processing. The scheduler also refreshes
+`ticket_state.updated_at` from Proactivanet's `DateLastModified` when it is more
+recent than the local timestamp, correcting clock drift before re-evaluating
+the staleness threshold.
+
+- `ProactivanetClient.get_ticket()` — new single-ticket read that returns `None`
+  on 404 and raises on other errors.
+- `_verify_or_close()` — DRY helper shared by both scheduler functions: checks
+  404, terminal status, and clock drift; marks `CLOSED_EXTERNALLY` and returns.
+- `TicketNotFound` — new exception raised by `route()` on a 404 annotation post,
+  ensuring callers skip `apply_transition()` and preventing CLOSED_EXTERNALLY
+  from being overwritten.
+- Worker now skips `CLOSED_EXTERNALLY` tickets (no unnecessary DLQ retries on
+  queued webhooks for deleted tickets) and handles `TicketNotFound` without
+  creating DLQ entries.
+- `_mark_waiting_for_client()` in the intake router guards `CLOSED_EXTERNALLY`
+  alongside `NEEDS_HUMAN` and `AUTO_RESP` — prevents a tech annotation from
+  resurrecting a closed ticket.
+- Network errors and type errors from the pre-verify GET are isolated per-ticket:
+  a transient Proactivanet 503 treats the ticket as active rather than aborting
+  the whole scheduler batch.
+
 ## [0.4.0] - 2026-05-27
 
 ### Added
