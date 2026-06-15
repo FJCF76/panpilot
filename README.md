@@ -4,7 +4,7 @@
 
 ### El copiloto de IA que convierte tu mesa de ayuda en una operación de alto rendimiento
 
-**Responde tickets de L1 automáticamente · Detecta lagunas en tu documentación · Nunca pierde un SLA**
+**Automatización L1/L2 para Proactivanet con Claude: responde cuando hay evidencia, completa tickets incompletos, vigila SLAs y convierte cada fallo en mejora documental.**
 
 ---
 
@@ -25,7 +25,7 @@
 
 Tu equipo de soporte dedica horas al día en trabajo que no requiere criterio humano: pedir información obvia que falta en el ticket, responder la misma pregunta sobre el agente de AD por décima vez, perseguir técnicos que no respondieron, y descubrir que un P1 lleva 6 horas sin movimiento.
 
-**PanPilot elimina ese trabajo por completo.**
+**PanPilot automatiza o asiste tareas repetitivas de soporte L1/L2 con umbrales de confianza, trazabilidad completa y control operativo.**
 
 Se conecta a Proactivanet mediante webhook, evalúa cada ticket con Claude AI, y actúa — respondiendo, preguntando, recordando o alertando — antes de que ningún agente haya siquiera abierto la interfaz. Cuando el ticket llega al equipo, ya tiene contexto, o ya está resuelto.
 
@@ -292,19 +292,6 @@ PanPilot arranca con `DRY_RUN=true`: evalúa todos los tickets y registra cada d
 # Editar .env → DRY_RUN=false
 sudo systemctl restart panpilot
 ```
-
----
-
-## 🗺️ Roadmap — v0.4.0
-
-Lo que viene después:
-
-| Funcionalidad | Descripción |
-|--------------|-------------|
-| 🔄 **Gestión de seguimientos** | Manejo del ciclo completo de respuesta al cliente: cuando el cliente responde a una aclaración, PanPilot retoma el hilo automáticamente |
-| 🏢 **Soporte multi-instancia** | Una sola instalación de PanPilot gestionando múltiples instancias de Proactivanet simultáneamente — ideal para MSPs y empresas con múltiples entornos |
-| 📧 **Alertas de DLQ exhausted** | Notificación proactiva (correo o webhook) cuando una entrada de la cola de errores se agota — sin necesidad de monitorear `journalctl` manualmente |
-| 🏷️ **Exclusión manual activada** | Campo personalizado de Proactivanet para marcar tickets que PanPilot debe ignorar completamente |
 
 ---
 
