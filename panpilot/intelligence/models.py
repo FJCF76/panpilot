@@ -24,6 +24,7 @@ TicketState = Literal[
     "PENDING_AGENT_ACTION",
     "NEEDS_HUMAN",
     "AWAITING_CLIENT_REPLY",
+    "CLOSED_EXTERNALLY",
 ]
 
 

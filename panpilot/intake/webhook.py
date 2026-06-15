@@ -96,7 +96,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     catchup_since = get_last_received_at(catchup_conn)
 
     # Step 2 (T6): start APScheduler stale detector
-    scheduler = build_scheduler(settings, action_type_map)
+    scheduler = build_scheduler(settings, action_type_map, terminal_status_names)
     scheduler.start()
 
     # Step 3 (T4): start DLQ background thread

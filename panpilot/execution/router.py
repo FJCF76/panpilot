@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from datetime import datetime, timezone
 
 import anthropic
+import httpx
 
 from panpilot.config import Settings
 from panpilot.execution.audit import write_audit
@@ -42,6 +44,15 @@ class PolicyViolation(Exception):
     This should never happen in normal operation — it indicates either a Claude
     API contract change (tool schema drift) or a bug in the evaluation engine.
     The worker must catch this and route the event to the DLQ.
+    """
+
+
+class TicketNotFound(Exception):
+    """
+    Raised by route() when post_annotation() returns 404.
+    The ticket was deleted in Proactivanet between the scheduler's pre-verify
+    check and this annotation post. Local state is already CLOSED_EXTERNALLY.
+    Callers must NOT call apply_transition() after catching this.
     """
 
 
@@ -136,6 +147,23 @@ def route(
     _client = proactivanet_client or ProactivanetClient(settings)
     try:
         _client.post_annotation(ctx.ticket_id, text=text, action_type_id=action_type_id)
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            # Ticket was deleted between the scheduler's pre-verify check and this post.
+            # Audit entry was already written (P1.1 above). Mark local state terminal.
+            conn.execute(
+                "UPDATE ticket_state SET state='CLOSED_EXTERNALLY', updated_at=? "
+                "WHERE ticket_id=?",
+                (datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z",
+                 ctx.ticket_id),
+            )
+            conn.commit()
+            logger.warning(
+                "ticket=%s: 404 on annotation post — ticket deleted; marked CLOSED_EXTERNALLY",
+                ctx.ticket_id,
+            )
+            raise TicketNotFound(ctx.ticket_id)
+        raise
     finally:
         if owned:
             _client.close()

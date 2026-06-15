@@ -11,6 +11,7 @@ import pytest
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from panpilot.config import get_settings
+from panpilot.execution.proactivanet import ProactivanetClient
 from panpilot.intake.scheduler import (
     _DEFAULT_PRIORITY,
     _SKIP_STATES,
@@ -77,11 +78,19 @@ _ACTION_TYPE_MAP = {
     "PublishedAction": "uuid-remind",
 }
 
+# Default Proactivanet response used when existing tests don't care about
+# verification: ticket exists, active, no DateLastModified clock refresh.
+_DEFAULT_PN_RESPONSE = {"Status": "Open", "DateLastModified": None}
+
 
 def _run(conn: sqlite3.Connection) -> int:
-    """Run detect_stale_tickets with route() patched to a no-op."""
-    with patch("panpilot.intake.scheduler.route") as mock_route:
+    """Run detect_stale_tickets with route() and ProactivanetClient patched."""
+    with patch("panpilot.intake.scheduler.route") as mock_route, \
+         patch("panpilot.intake.scheduler.ProactivanetClient") as mock_pn_cls:
         mock_route.return_value = None
+        mock_instance = MagicMock()
+        mock_instance.get_ticket.return_value = _DEFAULT_PN_RESPONSE
+        mock_pn_cls.return_value = mock_instance
         return detect_stale_tickets(conn, get_settings(), _ACTION_TYPE_MAP)
 
 
@@ -92,7 +101,11 @@ def _run_and_capture(conn: sqlite3.Connection) -> tuple[int, list]:
     def _capture(*args, **kwargs):
         calls.append(args)
 
-    with patch("panpilot.intake.scheduler.route", side_effect=_capture):
+    with patch("panpilot.intake.scheduler.route", side_effect=_capture), \
+         patch("panpilot.intake.scheduler.ProactivanetClient") as mock_pn_cls:
+        mock_instance = MagicMock()
+        mock_instance.get_ticket.return_value = _DEFAULT_PN_RESPONSE
+        mock_pn_cls.return_value = mock_instance
         count = detect_stale_tickets(conn, get_settings(), _ACTION_TYPE_MAP)
     return count, calls
 
@@ -336,7 +349,9 @@ def test_route_error_does_not_transition_state():
     # If route() raises, apply_transition() must not be called.
     conn = _conn()
     _insert_ticket_state(conn, "TKT-1", priority="P2", hours_old=25.0)
-    with patch("panpilot.intake.scheduler.route", side_effect=RuntimeError("network error")):
+    with patch("panpilot.intake.scheduler.route", side_effect=RuntimeError("network error")), \
+         patch("panpilot.intake.scheduler.ProactivanetClient") as mock_pn_cls:
+        mock_pn_cls.return_value.get_ticket.return_value = _DEFAULT_PN_RESPONSE
         detect_stale_tickets(conn, get_settings(), _ACTION_TYPE_MAP)
     row = conn.execute(
         "SELECT state FROM ticket_state WHERE ticket_id = ?", ("TKT-1",)
@@ -351,7 +366,9 @@ def test_route_error_does_not_transition_state():
 def test_route_error_does_not_propagate():
     conn = _conn()
     _insert_ticket_state(conn, "TKT-1", priority="P2", hours_old=25.0)
-    with patch("panpilot.intake.scheduler.route", side_effect=RuntimeError("network error")):
+    with patch("panpilot.intake.scheduler.route", side_effect=RuntimeError("network error")), \
+         patch("panpilot.intake.scheduler.ProactivanetClient") as mock_pn_cls:
+        mock_pn_cls.return_value.get_ticket.return_value = _DEFAULT_PN_RESPONSE
         count = detect_stale_tickets(conn, get_settings(), _ACTION_TYPE_MAP)
     assert count == 0  # error swallowed, not propagated
 
@@ -367,7 +384,9 @@ def test_route_error_on_one_ticket_does_not_stop_others():
         if ctx.ticket_id == "TKT-FAIL":
             raise RuntimeError("boom")
 
-    with patch("panpilot.intake.scheduler.route", side_effect=_sometimes_fail):
+    with patch("panpilot.intake.scheduler.route", side_effect=_sometimes_fail), \
+         patch("panpilot.intake.scheduler.ProactivanetClient") as mock_pn_cls:
+        mock_pn_cls.return_value.get_ticket.return_value = _DEFAULT_PN_RESPONSE
         count = detect_stale_tickets(conn, get_settings(), _ACTION_TYPE_MAP)
 
     assert call_count[0] == 2   # both tickets were attempted
@@ -449,8 +468,12 @@ def _insert_audit_remind(
 
 
 def _run_reminders(conn: sqlite3.Connection) -> int:
-    with patch("panpilot.intake.scheduler.route") as mock_route:
+    with patch("panpilot.intake.scheduler.route") as mock_route, \
+         patch("panpilot.intake.scheduler.ProactivanetClient") as mock_pn_cls:
         mock_route.return_value = None
+        mock_instance = MagicMock()
+        mock_instance.get_ticket.return_value = _DEFAULT_PN_RESPONSE
+        mock_pn_cls.return_value = mock_instance
         return send_proactive_reminders(conn, get_settings(), _ACTION_TYPE_MAP)
 
 
@@ -506,7 +529,9 @@ def test_reminder_per_ticket_cap_escalates():
     def _capture(*args, **kwargs):
         calls.append(args[0])  # first arg is the Decision
 
-    with patch("panpilot.intake.scheduler.route", side_effect=_capture):
+    with patch("panpilot.intake.scheduler.route", side_effect=_capture), \
+         patch("panpilot.intake.scheduler.ProactivanetClient") as mock_pn_cls:
+        mock_pn_cls.return_value.get_ticket.return_value = _DEFAULT_PN_RESPONSE
         with patch("panpilot.intake.scheduler.apply_transition"):
             send_proactive_reminders(conn, get_settings(), _ACTION_TYPE_MAP)
 
@@ -523,7 +548,9 @@ def test_reminder_decision_action_is_remind():
     def _capture(*args, **kwargs):
         calls.append(args[0])
 
-    with patch("panpilot.intake.scheduler.route", side_effect=_capture):
+    with patch("panpilot.intake.scheduler.route", side_effect=_capture), \
+         patch("panpilot.intake.scheduler.ProactivanetClient") as mock_pn_cls:
+        mock_pn_cls.return_value.get_ticket.return_value = _DEFAULT_PN_RESPONSE
         with patch("panpilot.intake.scheduler.apply_transition"):
             send_proactive_reminders(conn, get_settings(), _ACTION_TYPE_MAP)
 
@@ -539,7 +566,9 @@ def test_reminder_response_draft_is_spanish():
     def _capture(*args, **kwargs):
         calls.append(args[0])
 
-    with patch("panpilot.intake.scheduler.route", side_effect=_capture):
+    with patch("panpilot.intake.scheduler.route", side_effect=_capture), \
+         patch("panpilot.intake.scheduler.ProactivanetClient") as mock_pn_cls:
+        mock_pn_cls.return_value.get_ticket.return_value = _DEFAULT_PN_RESPONSE
         with patch("panpilot.intake.scheduler.apply_transition"):
             send_proactive_reminders(conn, get_settings(), _ACTION_TYPE_MAP)
 
@@ -560,9 +589,139 @@ def test_reminder_routing_failure_does_not_crash_loop():
         if call_count == 1:
             raise RuntimeError("simulated API failure")
 
-    with patch("panpilot.intake.scheduler.route", side_effect=_fail_first):
+    with patch("panpilot.intake.scheduler.route", side_effect=_fail_first), \
+         patch("panpilot.intake.scheduler.ProactivanetClient") as mock_pn_cls:
+        mock_pn_cls.return_value.get_ticket.return_value = _DEFAULT_PN_RESPONSE
         with patch("panpilot.intake.scheduler.apply_transition"):
             count = send_proactive_reminders(conn, get_settings(), _ACTION_TYPE_MAP)
 
     # One failed, one succeeded
+    assert count == 1
+
+
+# ---------------------------------------------------------------------------
+# Pre-verify: Proactivanet as source of truth
+# ---------------------------------------------------------------------------
+
+_TERMINAL_NAMES = frozenset({"closed", "resolved", "cancelled", "rejected"})
+
+
+def _mock_pn(get_ticket_return) -> MagicMock:
+    """Return a ProactivanetClient mock with get_ticket() preset."""
+    m = MagicMock(spec=ProactivanetClient)
+    m.get_ticket.return_value = get_ticket_return
+    return m
+
+
+# --- detect_stale_tickets ---
+
+def test_stale_deleted_ticket_marked_closed_externally():
+    """404 from Proactivanet → CLOSED_EXTERNALLY, no route() call."""
+    conn = _conn()
+    _insert_ticket_state(conn, "T1", state="CLR_REQ", priority="P2", hours_old=30)
+    pn = _mock_pn(None)  # None = 404
+    with patch("panpilot.intake.scheduler.route") as mock_route:
+        count = detect_stale_tickets(conn, get_settings(), _ACTION_TYPE_MAP,
+                                     _TERMINAL_NAMES, proactivanet_client=pn)
+    assert count == 0
+    assert mock_route.call_count == 0
+    row = conn.execute(
+        "SELECT state FROM ticket_state WHERE ticket_id='T1'").fetchone()
+    assert row["state"] == "CLOSED_EXTERNALLY"
+
+
+def test_stale_terminal_ticket_marked_closed_externally():
+    """Terminal Proactivanet status → CLOSED_EXTERNALLY, no route() call."""
+    conn = _conn()
+    _insert_ticket_state(conn, "T2", state="CLR_REQ", priority="P2", hours_old=30)
+    pn = _mock_pn({"Status": "Closed", "DateLastModified": None})
+    with patch("panpilot.intake.scheduler.route") as mock_route:
+        count = detect_stale_tickets(conn, get_settings(), _ACTION_TYPE_MAP,
+                                     _TERMINAL_NAMES, proactivanet_client=pn)
+    assert count == 0
+    assert mock_route.call_count == 0
+    row = conn.execute(
+        "SELECT state FROM ticket_state WHERE ticket_id='T2'").fetchone()
+    assert row["state"] == "CLOSED_EXTERNALLY"
+
+
+def test_stale_clock_drift_refreshes_timestamp_and_suppresses_alert():
+    """Proactivanet DateLastModified more recent → updated_at refreshed, alert suppressed."""
+    conn = _conn()
+    _insert_ticket_state(conn, "T3", state="CLR_REQ", priority="P2", hours_old=30)
+    recent_iso = _past_iso(1.0)  # modified 1 hour ago — well within P2 threshold (24h)
+    pn = _mock_pn({"Status": "Open", "DateLastModified": recent_iso})
+    with patch("panpilot.intake.scheduler.route") as mock_route:
+        count = detect_stale_tickets(conn, get_settings(), _ACTION_TYPE_MAP,
+                                     _TERMINAL_NAMES, proactivanet_client=pn)
+    assert count == 0
+    assert mock_route.call_count == 0
+
+
+def test_stale_active_ticket_routes_alert():
+    """Active ticket past threshold → alert fires as normal."""
+    conn = _conn()
+    _insert_ticket_state(conn, "T4", state="CLR_REQ", priority="P2", hours_old=30)
+    past_iso = _past_iso(28.0)  # modified 28h ago — still stale (P2 threshold = 24h)
+    pn = _mock_pn({"Status": "Open", "DateLastModified": past_iso})
+    with patch("panpilot.intake.scheduler.route"):
+        count = detect_stale_tickets(conn, get_settings(), _ACTION_TYPE_MAP,
+                                     _TERMINAL_NAMES, proactivanet_client=pn)
+    assert count == 1
+
+
+# --- send_proactive_reminders ---
+
+def test_reminder_deleted_ticket_marked_closed_externally():
+    """404 from Proactivanet on WAITING ticket → CLOSED_EXTERNALLY, no remind."""
+    conn = _conn()
+    _insert_waiting(conn, "W1", hours_old=30)
+    pn = _mock_pn(None)
+    with patch("panpilot.intake.scheduler.route") as mock_route:
+        count = send_proactive_reminders(conn, get_settings(), _ACTION_TYPE_MAP,
+                                         _TERMINAL_NAMES, proactivanet_client=pn)
+    assert count == 0
+    assert mock_route.call_count == 0
+    row = conn.execute(
+        "SELECT state FROM ticket_state WHERE ticket_id='W1'").fetchone()
+    assert row["state"] == "CLOSED_EXTERNALLY"
+
+
+def test_reminder_terminal_ticket_marked_closed_externally():
+    """Terminal status on WAITING ticket → CLOSED_EXTERNALLY, no remind."""
+    conn = _conn()
+    _insert_waiting(conn, "W2", hours_old=30)
+    pn = _mock_pn({"Status": "Resolved", "DateLastModified": None})
+    with patch("panpilot.intake.scheduler.route") as mock_route:
+        count = send_proactive_reminders(conn, get_settings(), _ACTION_TYPE_MAP,
+                                         _TERMINAL_NAMES, proactivanet_client=pn)
+    assert count == 0
+    assert mock_route.call_count == 0
+    row = conn.execute(
+        "SELECT state FROM ticket_state WHERE ticket_id='W2'").fetchone()
+    assert row["state"] == "CLOSED_EXTERNALLY"
+
+
+def test_reminder_clock_drift_refreshes_timestamp_and_suppresses_reminder():
+    """Fresh DateLastModified on WAITING ticket → updated_at refreshed, reminder suppressed."""
+    conn = _conn()
+    _insert_waiting(conn, "W3", hours_old=30)
+    recent_iso = _past_iso(1.0)  # modified 1h ago — well within reminder threshold (24h)
+    pn = _mock_pn({"Status": "Open", "DateLastModified": recent_iso})
+    with patch("panpilot.intake.scheduler.route") as mock_route:
+        count = send_proactive_reminders(conn, get_settings(), _ACTION_TYPE_MAP,
+                                         _TERMINAL_NAMES, proactivanet_client=pn)
+    assert count == 0
+    assert mock_route.call_count == 0
+
+
+def test_reminder_active_ticket_sends_reminder():
+    """Active WAITING ticket past threshold → reminder fires as normal."""
+    conn = _conn()
+    _insert_waiting(conn, "W4", hours_old=30)
+    past_iso = _past_iso(28.0)
+    pn = _mock_pn({"Status": "Open", "DateLastModified": past_iso})
+    with patch("panpilot.intake.scheduler.route"):
+        count = send_proactive_reminders(conn, get_settings(), _ACTION_TYPE_MAP,
+                                         _TERMINAL_NAMES, proactivanet_client=pn)
     assert count == 1

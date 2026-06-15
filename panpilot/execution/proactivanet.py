@@ -114,5 +114,24 @@ class ProactivanetClient:
 
         return result
 
+    def get_ticket(self, ticket_id: str) -> dict | None:
+        """
+        Fetch a single ticket from Proactivanet.
+
+        Returns the ticket dict on success.
+        Returns None on 404 (ticket deleted or not found).
+        Raises httpx.HTTPStatusError on other 4xx/5xx errors.
+
+        Note: a 404 can also mean a misconfigured API URL or a temporary
+        permissions change — not always a deleted ticket. CLOSED_EXTERNALLY
+        is permanent, so callers log at WARNING before transitioning.
+        """
+        url = f"{self._base_url}/Incidents/{ticket_id}"
+        response = self._client.get(url)
+        if response.status_code == 404:
+            return None
+        response.raise_for_status()
+        return response.json()
+
     def close(self) -> None:
         self._client.close()

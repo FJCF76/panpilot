@@ -52,6 +52,7 @@ from panpilot.intelligence.rag import RagDeps, rag_evaluate
 from panpilot.intelligence.state_machine import apply_transition
 from panpilot.intake.event_store import claim_next_event, mark_event_processed
 from panpilot.worker.dlq import create_dlq_entry
+from panpilot.execution.router import TicketNotFound
 from panpilot.worker.exceptions import TicketBusy
 
 logger = logging.getLogger(__name__)
@@ -210,7 +211,7 @@ def process_event(
         "SELECT state FROM ticket_state WHERE ticket_id=?", (ticket_id,)
     ).fetchone()
     _current_state: str | None = _state_row["state"] if _state_row else None
-    if _current_state in {"STALE_ALERT", "NEEDS_HUMAN"}:
+    if _current_state in {"STALE_ALERT", "NEEDS_HUMAN", "CLOSED_EXTERNALLY"}:
         logger.info(
             "Worker: skipping ticket=%s in state=%s (not actionable)",
             ticket_id, _current_state,
@@ -371,6 +372,16 @@ class WorkerThread:
                 ticket_id,
                 event_id,
             )
+        except TicketNotFound:
+            # Ticket was deleted in Proactivanet; local state already CLOSED_EXTERNALLY.
+            # Mark the event processed without creating a DLQ entry — retrying would
+            # just hit the same 404 indefinitely.
+            logger.warning(
+                "Worker: ticket=%s deleted (TicketNotFound) for event_id=%s — marking processed",
+                ticket_id,
+                event_id,
+            )
+            mark_event_processed(self._conn, event_id)
         except Exception as exc:
             logger.exception(
                 "Worker: event_id=%s ticket=%s failed — sending to DLQ", event_id, ticket_id

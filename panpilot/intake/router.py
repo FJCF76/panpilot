@@ -78,7 +78,7 @@ def _mark_waiting_for_client(conn: sqlite3.Connection, ticket_id: str) -> None:
     current = conn.execute(
         "SELECT state FROM ticket_state WHERE ticket_id=?", (ticket_id,)
     ).fetchone()
-    if current and current["state"] in {"NEEDS_HUMAN", "AUTO_RESP"}:
+    if current and current["state"] in {"NEEDS_HUMAN", "AUTO_RESP", "CLOSED_EXTERNALLY"}:
         logger.debug(
             "Skipping WAITING transition: ticket=%s state=%s (PanPilot stood down)",
             ticket_id,

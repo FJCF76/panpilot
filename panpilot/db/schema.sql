@@ -27,7 +27,8 @@ CREATE TABLE IF NOT EXISTS ticket_state (
     ticket_id            TEXT PRIMARY KEY,
     state                TEXT NOT NULL,    -- PENDING_EVALUATION | AUTO_RESP | CLR_REQ |
                                            -- WAITING | STALE_ALERT | PENDING_AGENT_ACTION |
-                                           -- NEEDS_HUMAN | AWAITING_CLIENT_REPLY
+                                           -- NEEDS_HUMAN | AWAITING_CLIENT_REPLY |
+                                           -- CLOSED_EXTERNALLY (ticket deleted or terminal in Proactivanet)
     priority             TEXT,             -- P1 | P2 | P3; NULL until T9 sets it
     updated_at           TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     clarification_count  INTEGER DEFAULT 0,

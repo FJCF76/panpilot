@@ -16,7 +16,7 @@ from panpilot.execution.proactivanet import (
     ANNOTATION_TYPE_REMIND,
     ProactivanetClient,
 )
-from panpilot.execution.router import PolicyViolation, _ANNOTATION_TYPE_NAME, route
+from panpilot.execution.router import PolicyViolation, TicketNotFound, _ANNOTATION_TYPE_NAME, route
 from panpilot.intelligence.models import Decision, TicketContext
 
 
@@ -301,3 +301,56 @@ def test_post_annotation_uses_auth_header(mock_proactivanet, monkeypatch):
     ProactivanetClient(get_settings()).post_annotation("TKT-002", text="x", action_type_id="uuid")
     req = mock_proactivanet.calls.last.request
     assert req.headers["authorization"] == "bearer-token-123"
+
+
+# ---------------------------------------------------------------------------
+# TicketNotFound — 404 on annotation post marks CLOSED_EXTERNALLY
+# ---------------------------------------------------------------------------
+
+def _make_404_side_effect() -> httpx.HTTPStatusError:
+    req = httpx.Request("POST", "http://test/")
+    resp = httpx.Response(404, request=req)
+    return httpx.HTTPStatusError("404", request=req, response=resp)
+
+
+def test_route_404_raises_ticket_not_found_and_sets_closed_externally(monkeypatch):
+    monkeypatch.setenv("DRY_RUN", "false")
+    get_settings.cache_clear()
+    conn = _in_memory_conn()
+    conn.execute(
+        "INSERT INTO ticket_state (ticket_id, state, priority) VALUES (?, 'CLR_REQ', 'P2')",
+        ("TKT-404",))
+    conn.commit()
+    mock = _mock_client()
+    mock.post_annotation.side_effect = _make_404_side_effect()
+    with pytest.raises(TicketNotFound):
+        route(_make_decision("alert"), _make_ctx(ticket_id="TKT-404"), get_settings(), conn,
+              _ACTION_TYPE_MAP, proactivanet_client=mock)
+    row = conn.execute(
+        "SELECT state FROM ticket_state WHERE ticket_id='TKT-404'").fetchone()
+    assert row["state"] == "CLOSED_EXTERNALLY"
+
+
+def test_route_non_404_http_error_reraises(monkeypatch):
+    monkeypatch.setenv("DRY_RUN", "false")
+    get_settings.cache_clear()
+    conn = _in_memory_conn()
+    mock = _mock_client()
+    req = httpx.Request("POST", "http://test/")
+    resp = httpx.Response(500, request=req)
+    mock.post_annotation.side_effect = httpx.HTTPStatusError("500", request=req, response=resp)
+    with pytest.raises(httpx.HTTPStatusError):
+        route(_make_decision("alert"), _make_ctx(), get_settings(), conn,
+              _ACTION_TYPE_MAP, proactivanet_client=mock)
+
+
+def test_route_404_does_not_raise_if_dry_run(monkeypatch):
+    """In DRY_RUN mode, post_annotation is never called — no 404 possible."""
+    monkeypatch.setenv("DRY_RUN", "true")
+    get_settings.cache_clear()
+    conn = _in_memory_conn()
+    mock = _mock_client()
+    # Should complete without error; post_annotation is never invoked in dry run
+    route(_make_decision("alert"), _make_ctx(), get_settings(), conn,
+          _ACTION_TYPE_MAP, proactivanet_client=mock)
+    mock.post_annotation.assert_not_called()
