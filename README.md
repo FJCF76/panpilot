@@ -224,21 +224,25 @@ PanPilot usa un pipeline de evaluación en dos pasos diseñado para responder co
 
 ### Despliegue asistido por IA
 
-En el VPS destino, clona el repo y abre Claude Code (u otro agente IA) dentro del directorio `panpilot/`. Luego pega este prompt:
+En el VPS destino, abre Claude Code y pega este prompt:
 
 ```
-Read https://raw.githubusercontent.com/FJCF76/panpilot/main/docs/howto-server-setup.md
-and follow every step to deploy PanPilot on this server from scratch.
-The full configuration reference is at:
+Deploy PanPilot on this VPS from scratch. Follow the setup guide at:
+https://raw.githubusercontent.com/FJCF76/panpilot/main/docs/howto-server-setup.md
+
+Configuration reference:
 https://raw.githubusercontent.com/FJCF76/panpilot/main/docs/reference-configuration.md
 
-Before starting, confirm:
-  1. You are running as a user with sudo access.
-  2. The working directory is the panpilot repo root.
-  3. Ask me for any credentials you need (API keys, passwords, domain name,
-     Proactivanet URL and author UUID) before writing them anywhere.
-Do not proceed to the next step until you verify the current one succeeded.
-Start with Step 1 (system dependencies).
+Repository to clone: https://github.com/FJCF76/panpilot.git
+
+Rules:
+- Before writing any credential to disk, ask me for it explicitly:
+  Anthropic API key, Proactivanet API URL, Proactivanet API key,
+  Proactivanet author UUID, admin password, and domain name.
+- Verify each step succeeded before moving to the next.
+- If you hit an error you cannot resolve, stop immediately and report:
+  the exact error message, what you tried, and what you need from me.
+- Do not skip or defer any step.
 ```
 
 La guía completa está en [`docs/howto-server-setup.md`](docs/howto-server-setup.md).
