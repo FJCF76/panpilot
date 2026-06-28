@@ -10,6 +10,67 @@ webhooks from Proactivanet in dry-run mode ready for Week 1 validation.
 
 ---
 
+## Migrating from an existing server
+
+If you are replacing an existing PanPilot installation, do this **before destroying
+the old server**:
+
+### 1. Save your credentials
+
+Copy `.env` off the server — it contains all credentials that cannot be recovered
+without going back through each provider:
+
+```bash
+# On the old server — copy .env to a secure location
+cat .env
+```
+
+Key values to note separately:
+- `PROACTIVANET_API_URL` and `PROACTIVANET_BASE_URL`
+- `PROACTIVANET_API_KEY`
+- `PROACTIVANET_AUTHOR_ID` — the technician UUID; you won't need to create a new
+  account if you reuse the same Proactivanet instance
+- `ANTHROPIC_API_KEY`
+- `WEBHOOK_SECRET` — must match exactly what is configured in Proactivanet's webhook settings
+- `CONFIDENCE_THRESHOLD` — if you tuned this away from the default (0.85), note the value
+- `ADMIN_PASSWORD`
+
+### 2. Copy the pandocs corpus
+
+The pandocs directory is not part of the repo — it lives outside it (typically `~/pandocs`).
+Copy it to the new server before destroying the old one:
+
+```bash
+# From the old server, push pandocs to the new server
+rsync -avz ~/pandocs/ user@new-server-ip:~/pandocs/
+```
+
+Or download it locally first as a backup:
+
+```bash
+rsync -avz ~/pandocs/ ./pandocs-backup/
+```
+
+After setting up the new server, re-index from the copied directory:
+
+```bash
+uv run python scripts/index_pandocs.py --pandocs ~/pandocs --chroma data/chroma
+```
+
+### 3. Optionally preserve the audit log
+
+The full decision history lives in `data/panpilot.db`. If you want to keep it:
+
+```bash
+sqlite3 data/panpilot.db ".backup panpilot-backup.db"
+scp panpilot-backup.db user@new-server-ip:~/panpilot/data/panpilot.db
+```
+
+The schema is created automatically at startup (`IF NOT EXISTS`), so copying the
+database to the new server is safe — startup will not overwrite existing data.
+
+---
+
 ## Prerequisites
 
 Before starting, you need:

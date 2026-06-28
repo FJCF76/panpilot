@@ -4,10 +4,10 @@ After=network.target
 
 [Service]
 Type=simple
-User=wfroot-n5i9y
-WorkingDirectory=/home/wfroot-n5i9y/panpilot
-EnvironmentFile=/home/wfroot-n5i9y/panpilot/.env
-ExecStart=/home/wfroot-n5i9y/panpilot/.venv/bin/uvicorn panpilot.intake.webhook:app \
+User=YOUR_USERNAME
+WorkingDirectory=/home/YOUR_USERNAME/panpilot
+EnvironmentFile=/home/YOUR_USERNAME/panpilot/.env
+ExecStart=/home/YOUR_USERNAME/panpilot/.venv/bin/uvicorn panpilot.intake.webhook:app \
     --host 127.0.0.1 --port 8000 --workers 1
 # --workers 1 is required: APScheduler uses a SQLite job store;
 # multiple workers each create a scheduler instance causing duplicate stale alerts.
