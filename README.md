@@ -224,7 +224,7 @@ PanPilot usa un pipeline de evaluación en dos pasos diseñado para responder co
 
 ### Despliegue asistido por IA
 
-Pega este prompt en Claude Code (u otro agente IA con acceso al repo) desde la raíz del proyecto en el VPS destino:
+En el VPS destino, clona el repo y abre Claude Code (u otro agente IA) dentro del directorio `panpilot/`. Luego pega este prompt:
 
 ```
 Read docs/howto-server-setup.md and follow every step to deploy PanPilot on this
