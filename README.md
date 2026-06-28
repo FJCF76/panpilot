@@ -297,6 +297,8 @@ sudo systemctl restart panpilot
 
 ## 📚 Documentación técnica
 
+- [`docs/howto-server-setup.md`](docs/howto-server-setup.md) — guía paso a paso: despliegue completo desde cero
+- [`docs/reference-configuration.md`](docs/reference-configuration.md) — referencia completa de variables de entorno
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — arquitectura de tres capas, máquina de estados, modelo de datos, decisiones de diseño
 - [`CHANGELOG.md`](CHANGELOG.md) — historial completo de versiones
 
