@@ -238,7 +238,8 @@ Repository to clone: https://github.com/FJCF76/panpilot.git
 Rules:
 - Before writing any credential to disk, ask me for it explicitly:
   Anthropic API key, Proactivanet API URL, Proactivanet API key,
-  Proactivanet author UUID, admin password, and domain name.
+  Proactivanet author UUID, PanPilot admin panel password (ADMIN_PASSWORD),
+  and domain name.
 - Verify each step succeeded before moving to the next.
 - If you hit an error you cannot resolve, stop immediately and report:
   the exact error message, what you tried, and what you need from me.
