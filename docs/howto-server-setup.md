@@ -44,7 +44,7 @@ uv --version       # should print uv 0.x.x
 ## Step 2: Clone the repository
 
 ```bash
-git clone git@github.com:FJCF76/panpilot.git ~/panpilot
+git clone <your-panpilot-repo-url> ~/panpilot
 cd ~/panpilot
 ```
 
@@ -269,8 +269,8 @@ If you see `ValueError: PROACTIVANET_AUTHOR_ID must be set`, go back to Step 4.
 
 ### 8a. Customize the nginx config
 
-Open `deploy/panpilot-nginx.conf` and replace `panpilot.owncompute.com` with your
-actual domain name in both the `server_name` directives.
+Open `deploy/panpilot-nginx.conf` and replace the placeholder domain in both
+`server_name` directives with your actual domain name.
 
 ### 8b. Install the nginx config
 
