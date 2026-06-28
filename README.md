@@ -222,6 +222,25 @@ PanPilot usa un pipeline de evaluación en dos pasos diseñado para responder co
 
 ## 🚀 Inicio rápido
 
+### Despliegue asistido por IA
+
+Pega este prompt en Claude Code (u otro agente IA con acceso al repo) desde la raíz del proyecto en el VPS destino:
+
+```
+Read docs/howto-server-setup.md and follow every step to deploy PanPilot on this
+server from scratch. Before starting, confirm:
+  1. You are running as a user with sudo access.
+  2. The working directory is the panpilot repo root.
+  3. Ask me for any credentials you need (API keys, passwords, domain name,
+     Proactivanet URL and author UUID) before writing them anywhere.
+Do not proceed to the next step until you verify the current one succeeded.
+Start with Step 1 (system dependencies).
+```
+
+La guía completa está en [`docs/howto-server-setup.md`](docs/howto-server-setup.md).
+
+---
+
 ### Requisitos
 
 - Python 3.12 y `uv`
