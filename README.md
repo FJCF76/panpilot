@@ -227,8 +227,12 @@ PanPilot usa un pipeline de evaluación en dos pasos diseñado para responder co
 En el VPS destino, clona el repo y abre Claude Code (u otro agente IA) dentro del directorio `panpilot/`. Luego pega este prompt:
 
 ```
-Read docs/howto-server-setup.md and follow every step to deploy PanPilot on this
-server from scratch. Before starting, confirm:
+Read https://raw.githubusercontent.com/FJCF76/panpilot/main/docs/howto-server-setup.md
+and follow every step to deploy PanPilot on this server from scratch.
+The full configuration reference is at:
+https://raw.githubusercontent.com/FJCF76/panpilot/main/docs/reference-configuration.md
+
+Before starting, confirm:
   1. You are running as a user with sudo access.
   2. The working directory is the panpilot repo root.
   3. Ask me for any credentials you need (API keys, passwords, domain name,
