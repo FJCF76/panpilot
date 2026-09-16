@@ -3,6 +3,7 @@
 # 🤖 PanPilot
 MVP técnico independiente creado para explorar la arquitectura, los controles y el modelo operativo necesarios para la automatización del soporte asistida por IA. No es un producto oficial de Proactivanet ni se presenta como un despliegue en producción.
 
+---
 
 ### El copiloto de IA que convierte tu mesa de ayuda en una operación de alto rendimiento
 
